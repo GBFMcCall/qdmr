@@ -115,6 +115,34 @@ Radio::detect(const USBDeviceDescriptor &descr, const RadioInfo &force, const Er
       return nullptr;
     }
     anytone->deleteLater();
+  } else if (AnytoneMaverickInterface::interfaceInfo() == descr) {
+    auto anytone = new AnytoneMaverickInterface(descr, err);
+    if (anytone->isOpen()) {
+      RadioInfo id = anytone->identifier(err);
+      if ((id.isValid() && (RadioInfo::D868UVE == id.id())) || (force.isValid() && (RadioInfo::D868UVE == force.id()))) {
+        return new D868UV(anytone);
+      } if ((id.isValid() && (RadioInfo::D878UV == id.id())) || (force.isValid() && (RadioInfo::D878UV == force.id()))) {
+        return new D878UV(anytone);
+      } if ((id.isValid() && (RadioInfo::D878UVII == id.id())) || (force.isValid() && (RadioInfo::D878UVII == force.id()))) {
+        return new D878UV2(anytone);
+      } if ((id.isValid() && (RadioInfo::D578UV == id.id())) || (force.isValid() && (RadioInfo::D578UV == force.id()))) {
+        return new D578UV(anytone);
+      } if ((id.isValid() && (RadioInfo::DMR6X2UV == id.id())) || (force.isValid() && (RadioInfo::DMR6X2UV == force.id()))) {
+        return new DMR6X2UV(anytone);
+      } if ((id.isValid() && (RadioInfo::DMR6X2UV2 == id.id())) || (force.isValid() && (RadioInfo::DMR6X2UV2 == force.id()))) {
+        return new DMR6X2UV2(anytone);
+      } if (id.isValid()) {
+        errMsg(err) << tr("Unhandled device %1 '%2'. Device known but not implemented yet.")
+                       .arg(id.manufacturer())
+                       .arg(id.name());
+      } else {
+        errMsg(err) << tr("Unknown AnyTone (or similar) device.");
+      }
+      anytone->close();
+      anytone->deleteLater();
+      return nullptr;
+    }
+    anytone->deleteLater();
   } else if (OpenGD77Interface::interfaceInfo() == descr) {
     OpenGD77Interface *ogd77 = new OpenGD77Interface(descr, err);
     if (ogd77->isOpen()) {

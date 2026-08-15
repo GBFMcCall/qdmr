@@ -6,6 +6,10 @@
 #define USB_PID_GD32  0x018a
 #define USB_VID_STM32 0x2e3c
 #define USB_PID_STM32 0x5740
+// BridgeCom Maverick programming cable: a genuine STMicroelectronics CDC-ACM virtual COM port,
+// distinct from the GD32/STM32 clone VID/PID pairs the AnyTone-branded cables above use.
+#define USB_VID_MAVERICK 0x0483
+#define USB_PID_MAVERICK 0x5740
 
 /* ********************************************************************************************* *
  * Implementation of AnytoneInterface::ReadRequest
@@ -452,4 +456,57 @@ QList<USBDeviceDescriptor>
 AnytoneSTM32Interface::detect(bool saveOnly) {
   Q_UNUSED(saveOnly);
   return USBSerial::detect(USB_VID_STM32, USB_PID_STM32, true);
+}
+
+
+
+/* ********************************************************************************************* *
+ * Implementation of AnytoneMaverickInterface
+ * ********************************************************************************************* */
+AnytoneMaverickInterface::AnytoneMaverickInterface(const USBDeviceDescriptor &descriptor, const ErrorStack &err, QObject *parent)
+  : AnytoneInterface(descriptor, err, parent)
+{
+  // pass...
+}
+
+RadioInfo
+AnytoneMaverickInterface::identifier(const ErrorStack &err) {
+  if (! _info.isValid())
+    return RadioInfo();
+  // Confirmed live against a physical BridgeCom Maverick: the radio identifies itself over this
+  // protocol as "D890UV". There is no dedicated RadioInfo entry for that BridgeCom-branded model
+  // name -- it is AnyTone's D868UVE hardware/firmware family (same memory layout; the Maverick's
+  // CPS init file is even named "D868UVE_20.rdt"), so map it onto the existing D868UVE support.
+  if ("D890UV" == _info.name) {
+    return RadioInfo::byID(RadioInfo::D868UVE);
+  } else if ("D868UVE" == _info.name) {
+    return RadioInfo::byID(RadioInfo::D868UVE);
+  } else if ("D6X2UV" == _info.name) {
+    return RadioInfo::byID(RadioInfo::DMR6X2UV);
+  } else if ("D6X2UV2" == _info.name) {
+    return RadioInfo::byID(RadioInfo::DMR6X2UV2);
+  } else if ("D878UV" == _info.name) {
+    return RadioInfo::byID(RadioInfo::D878UV);
+  } else if ("D878UV2" == _info.name) {
+    return RadioInfo::byID(RadioInfo::D878UVII);
+  } else if ("D578UV" == _info.name) {
+    return RadioInfo::byID(RadioInfo::D578UV);
+  } else if ("D578UV2" == _info.name) {
+    return RadioInfo::byID(RadioInfo::D578UVII);
+  }
+
+  errMsg(err) << tr("Unsupported AnyTone radio '%1', HW rev. '%2'.")
+                 .arg(_info.name).arg(_info.version);
+  return RadioInfo();
+}
+
+USBDeviceInfo
+AnytoneMaverickInterface::interfaceInfo() {
+  return USBDeviceInfo(USBDeviceInfo::Class::Serial, USB_VID_MAVERICK, USB_PID_MAVERICK);
+}
+
+QList<USBDeviceDescriptor>
+AnytoneMaverickInterface::detect(bool saveOnly) {
+  Q_UNUSED(saveOnly);
+  return USBSerial::detect(USB_VID_MAVERICK, USB_PID_MAVERICK, true);
 }

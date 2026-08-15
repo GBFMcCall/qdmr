@@ -1125,7 +1125,7 @@ D868UVCodeplug::GeneralSettingsElement::setAutoRepeaterDirectionB(AnytoneAutoRep
 
 bool
 D868UVCodeplug::GeneralSettingsElement::defaultChannel() const {
-  return getUInt8(Offset::defaultChannels());
+  return 0x01 == getUInt8(Offset::defaultChannels());
 }
 void
 D868UVCodeplug::GeneralSettingsElement::enableDefaultChannel(bool enable) {

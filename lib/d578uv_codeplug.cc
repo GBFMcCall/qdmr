@@ -1453,7 +1453,7 @@ D578UVCodeplug::GeneralSettingsElement::enableFMSendIDAndContact(bool enable) {
 
 bool
 D578UVCodeplug::GeneralSettingsElement::defaultChannel() const {
-  return getUInt8(Offset::defaultChannels());
+  return 0x01 == getUInt8(Offset::defaultChannels());
 }
 void
 D578UVCodeplug::GeneralSettingsElement::enableDefaultChannel(bool enable) {

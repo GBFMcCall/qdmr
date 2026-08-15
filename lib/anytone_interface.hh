@@ -186,4 +186,34 @@ public:
   static QList<USBDeviceDescriptor> detect(bool saveOnly=true);
 };
 
+
+/** Implements the interface to the BridgeCom Maverick, a rebadged AnyTone AT-D890UV/D868UV-family
+ * radio.
+ *
+ * This interface is identical to the previous ones, except it uses a different VID/PID combo.
+ * The Maverick's programming cable identifies as a genuine STMicroelectronics CDC-ACM virtual
+ * COM port, VID @c 0x0483 and PID @c 0x5740 (as opposed to the AnyTone-branded cables' GD32/STM32
+ * clone VID/PID pairs above).
+ *
+ * @ingroup anytone */
+class AnytoneMaverickInterface: public AnytoneInterface
+{
+  Q_OBJECT
+
+public:
+  /** Constructs a new interface to Anytone radios. If a matching device was found, @c isOpen
+   * returns @c true. */
+  explicit AnytoneMaverickInterface(const USBDeviceDescriptor &descriptor,
+                               const ErrorStack &err=ErrorStack(), QObject *parent=nullptr);
+
+  /** Returns an identifier of the radio. */
+  RadioInfo identifier(const ErrorStack &err=ErrorStack());
+
+public:
+  /** Returns some information about this interface. */
+  static USBDeviceInfo interfaceInfo();
+  /** Tries to find all interfaces connected AnyTone radios. */
+  static QList<USBDeviceDescriptor> detect(bool saveOnly=true);
+};
+
 #endif // ANYTONEINTERFACE_HH

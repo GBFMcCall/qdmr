@@ -1788,7 +1788,7 @@ D878UVCodeplug::GeneralSettingsElement::enableFMSendIDAndContact(bool enable) {
 
 bool
 D878UVCodeplug::GeneralSettingsElement::defaultChannel() const {
-  return getUInt8(Offset::defaultChannels());
+  return 0x01 == getUInt8(Offset::defaultChannels());
 }
 void
 D878UVCodeplug::GeneralSettingsElement::enableDefaultChannel(bool enable) {
