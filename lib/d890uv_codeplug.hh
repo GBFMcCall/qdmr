@@ -11,17 +11,21 @@
  * log, including exactly what is and is not independently verified.
  *
  * What's mapped:
- *  - Channel bank 1: 128 of the radio's real ~163 channels, at device address `0x00FC0000`,
- *    `0x80` bytes/record (double the D868UVE's `0x40`). RX frequency and TX offset/direction are
- *    at the same relative offsets as the D868UVE live format (`+0x00`/`+0x04`/byte `0x08`) and
- *    were cross-checked against known real channel values - high confidence. The channel *name*
- *    field moved to `+0x44` and is UTF-16LE (not Latin1) - also cross-checked directly. Other
- *    per-channel fields (mode, power, color code, timeslot, contact index, admit criterion,
+ *  - All 163 real channels, in two banks, `0x80` bytes/record (double the D868UVE's `0x40`):
+ *    bank 1 holds channel indices 0-127 at device address `0x00FC0000`; bank 2 holds indices
+ *    128-162 (the remaining 35) at `0x010C0000` - found by a dense address sweep, not derived
+ *    from any formula relative to bank 1 (it is not a clean multiple of `betweenChannelBanks()`
+ *    the way D868UVE's own banks are). Both banks confirmed to hold real data ending exactly
+ *    where expected (128 records in bank 1, 35 in bank 2 = 163 total, matching the known-good
+ *    zone/channel count from the original investigation). RX frequency and TX offset/direction
+ *    are at the same relative offsets as the D868UVE live format (`+0x00`/`+0x04`/byte `0x08`)
+ *    and were cross-checked against known real channel values - high confidence. The channel
+ *    *name* field moved to `+0x44` and is UTF-16LE (not Latin1) - also cross-checked directly.
+ *    Other per-channel fields (mode, power, color code, timeslot, contact index, admit criterion,
  *    bandwidth) are read using the *same* byte-8-region bit-packing as the D868UVE live format;
  *    this is a reasonable-confidence inference (the repeater-direction bits in that byte decoded
  *    correctly for a known channel during reverse-engineering) but is not independently verified
  *    field-by-field the way frequency/name are.
- *  - Channels 129-163 ("bank 2"): NOT located. A real search effort did not find it - see the doc.
  *  - All 12 zones: channel-membership lists at `0x02000000 + zone_index * 0x200`, fully verified
  *    against a real reference codeplug (exact match, all 12, including edge cases). Zone *names*
  *    were not found anywhere on the live device and are synthesized as "Zone N" here.
@@ -83,11 +87,15 @@ protected:
   bool createElements(Context &ctx, const ErrorStack &err);
   bool linkElements(Context &ctx, const ErrorStack &err);
 
-  /** Allocates channel bank 1 (128 channels, unconditionally - no live bitmap is used or
-   *  trusted; see class documentation). */
+  /** Allocates both channel banks (163 channels total, unconditionally - no live bitmap is used
+   *  or trusted; see class documentation). */
   void allocateChannels();
   bool createChannels(Context &ctx, const ErrorStack &err);
   bool linkChannels(Context &ctx, const ErrorStack &err);
+
+  /** Returns the device address of the i-th channel (0-based), accounting for the bank 1/bank 2
+   *  split (see class documentation). */
+  static uint32_t channelAddress(uint16_t i);
 
   /** Allocates all 12 zones' channel-membership lists (fixed count, no live bitmap). */
   void allocateZones();
@@ -97,8 +105,11 @@ protected:
 protected:
   /** Limits specific to what's actually been mapped on this radio so far. */
   struct Limit: public D868UVCodeplug::Limit {
-    /** Only bank 1 is mapped - the real radio has ~163 channels, this exposes 128. */
-    static constexpr unsigned int numChannels() { return 128; }
+    /** Both banks mapped - the full, real, confirmed channel count. */
+    static constexpr unsigned int numChannels() { return 163; }
+    /** Number of channels in bank 1, at @c Offset::channelBanks(). Channels at or beyond this
+     *  index live in bank 2, at @c Offset::channelBank2(). */
+    static constexpr unsigned int channelsInBank1() { return 128; }
     /** Fully confirmed against a real reference codeplug. */
     static constexpr unsigned int numZones() { return 12; }
   };
@@ -108,6 +119,7 @@ protected:
   struct Offset: public D868UVCodeplug::Offset {
     /// @cond DO_NOT_DOCUMENT
     static constexpr unsigned int channelBanks() { return 0x00FC0000; }
+    static constexpr unsigned int channelBank2() { return 0x010C0000; }
     static constexpr unsigned int zoneChannels() { return 0x02000000; }
     // betweenZoneChannels() (0x200) matches the inherited D868UVE default - no override needed.
     /// @endcond

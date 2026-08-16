@@ -85,10 +85,17 @@ D890UVCodeplug::linkElements(Context &ctx, const ErrorStack &err) {
 }
 
 
+uint32_t
+D890UVCodeplug::channelAddress(uint16_t i) {
+  if (i < Limit::channelsInBank1())
+    return Offset::channelBanks() + i*ChannelElement::size();
+  return Offset::channelBank2() + (i-Limit::channelsInBank1())*ChannelElement::size();
+}
+
 void
 D890UVCodeplug::allocateChannels() {
   for (uint16_t i=0; i<Limit::numChannels(); i++) {
-    uint32_t addr = Offset::channelBanks() + i*ChannelElement::size();
+    uint32_t addr = channelAddress(i);
     if (! isAllocated(addr, 0))
       image(0).addElement(addr, ChannelElement::size());
   }
@@ -98,7 +105,7 @@ bool
 D890UVCodeplug::createChannels(Context &ctx, const ErrorStack &err) {
   Q_UNUSED(err)
   for (uint16_t i=0; i<Limit::numChannels(); i++) {
-    ChannelElement ch(data(Offset::channelBanks() + i*ChannelElement::size()));
+    ChannelElement ch(data(channelAddress(i)));
     if (Channel *obj = ch.toChannelObj(ctx)) {
       ctx.config()->channelList()->add(obj); ctx.add(obj, i);
     }
@@ -110,7 +117,7 @@ bool
 D890UVCodeplug::linkChannels(Context &ctx, const ErrorStack &err) {
   Q_UNUSED(err)
   for (uint16_t i=0; i<Limit::numChannels(); i++) {
-    ChannelElement ch(data(Offset::channelBanks() + i*ChannelElement::size()));
+    ChannelElement ch(data(channelAddress(i)));
     if (ctx.has<Channel>(i))
       ch.linkChannelObj(ctx.get<Channel>(i), ctx);
   }

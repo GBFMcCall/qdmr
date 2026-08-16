@@ -7,6 +7,45 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
+## Update (2026-08-16, night, MILESTONE 2) — bank 2 found: all 163 channels, all 12 zones complete
+
+User confirmed the GUI read (fresh relaunch, direct Read, no errors) matches the CLI output
+byte-for-byte and loaded all channels correctly; zones showed as `Zone 1`-`Zone 12` placeholders
+as expected. Also saved a QDMR-exported copy of the read (`Bridgecom_Maverick_qdmr.yaml`) alongside
+the reference file - confirmed identical to the CLI's own output, good cross-check that GUI and
+CLI paths agree.
+
+**Found channel bank 2.** Revisited the address search with two fixes to the earlier approach:
+1. `scanaddr` sweeps were using a stride that's a clean multiple of the 128-byte channel record
+   size (`0x1000`, `0x400`) - if bank 2 wasn't phase-aligned the same way as bank 1, every sample
+   could land on the same "dead" byte offset within each record and systematically miss it
+   regardless of how fine the stride looked. Re-swept with an odd stride (`0x333`) to shift phase.
+2. That immediately surfaced real content (`WT5EOC`, `Dep OK`, `LVTc`, `Bix`, `Channel...`) in
+   `0x01000000`-`0x02000000` - a region earlier written off entirely as "just a mirror of bank 1"
+   because only the first record had been checked there.
+
+A dense follow-up dump found the full picture: `0x01000000`-`0x01004000` genuinely is a complete,
+exact mirror of bank 1 (consistent with the address-aliasing quirk noted throughout this log) -
+but **`0x010C0000` is a second, real, distinct table** picking up exactly where bank 1's channel
+indices leave off: 35 more records, same `0x80`-byte format, running `Bix OKE` → ... → `Dep OK
+Wtr1` → `Channel VFO B/A` → `EU APRS TransmiT/Receive`, then blank. `128 + 35 = 163` - the exact
+count from the very first Windows-CPS-confirmed codeplug at the top of this log. Bank 2's base
+(`0x010C0000`) isn't a clean multiple of `betweenChannelBanks()` or any other formula relative to
+bank 1 found so far - just a real, separate address, located and used as-is.
+
+**`D890UVCodeplug` updated accordingly** (`channelAddress(i)` now routes to bank 1 or bank 2
+depending on index; `Limit::numChannels()` is now the real `163`). Re-verified against the live
+radio: **all 163 channels decode correctly, and all 12 zones now show their full, correct channel
+membership** - Bixby (17), Depew (16), and Traveling (2), previously truncated/empty, are complete.
+
+**Updated status:**
+- ✅ All 163 channels (name, frequency, TX offset/direction, inferred mode/power/etc.)
+- ✅ All 12 zones, full correct membership
+- ❌ Zone names (still placeholders - real table not found)
+- ❌ Contacts, radio ID(s), scan lists, group lists, general settings
+
+---
+
 ## Update (2026-08-16, night, MILESTONE) — first real, working read from the live radio
 
 **`dmrconf read` now produces a correct, real decode of this radio for the first time.** New
