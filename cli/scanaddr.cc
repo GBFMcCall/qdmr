@@ -104,9 +104,25 @@ int main(int argc, char *argv[]) {
     }
     bool asciiHit = maxrun >= 8;
 
-    if (freqHit || asciiHit) {
+    // Strong signal 3: UTF-16LE text - printable byte, then 0x00, repeated. Short zone/channel
+    // names (e.g. "Pi", "Bixby") never trigger asciiHit above since every other byte is 0x00;
+    // this catches them. Checked at both even and odd start offsets in case the 16-byte window
+    // doesn't land on a char boundary.
+    int maxu16 = 0;
+    for (int startOff=0; startOff<2; startOff++) {
+      int urun=0, ubest=0;
+      for (int i=startOff; i+1<16; i+=2) {
+        if (buf[i]>32 && buf[i]<127 && buf[i+1]==0) { urun++; if (urun>ubest) ubest=urun; }
+        else urun=0;
+      }
+      if (ubest>maxu16) maxu16=ubest;
+    }
+    bool utf16Hit = maxu16 >= 3;
+
+    if (freqHit || asciiHit || utf16Hit) {
       nstrong++;
-      printf("%s 0x%08x:", freqHit ? "[FREQ]" : "[ASCII]", addr);
+      const char *tag = freqHit ? "[FREQ]" : (utf16Hit ? "[UTF16]" : "[ASCII]");
+      printf("%s 0x%08x:", tag, addr);
       for (int i=0; i<16; i++) printf(" %02x", buf[i]);
       printf("  |");
       for (int i=0; i<16; i++) printf("%c", (buf[i]>=32 && buf[i]<127) ? (char)buf[i] : '.');

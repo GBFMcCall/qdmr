@@ -7,6 +7,44 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
+## Update (2026-08-16, later night) — zone/location names: one confirmed hit, rest still elusive
+
+User provided ground truth for cross-checking: the 12 real DMR zone names are **Mounds, Analog,
+Tulsa So, Pi, Tulsa C, BikeRide, Preston, Mannford, Claremore, Bixby, Depew, Travling** (`Analog`
+and `BikeRide` deliberately break the naming convention — individual repeaters, not
+channel-per-mode groups). Separately, there are 4 airband zones: **Sapulpa, Frankfurt, LHR,
+Charlotte**. Also: **within a DMR zone, RX and TX frequency are always identical** (no offset) —
+useful for telling DMR channel records apart from analog ones once decoding the rest of the
+128-byte channel record.
+
+Added a third detector to `scanaddr` — UTF-16LE text (printable byte, `0x00`, repeated) — since
+short names like `Pi` or `Bixby` never trigger the plain-ASCII detector (every other byte is
+`0x00`, so there's never a run of 8 consecutive printable bytes).
+
+**Confirmed:** `Sapulpa` (exact match, one of the 4 airband zones) found at `0x03888000`, right
+next to a record at `0x03880000` decoding as `Civil ` + freq `121.500 MHz` — the international
+civil aviation emergency frequency. That pairing suggests this area is more likely an **airband
+reference/channel table** (built-in standard frequency + a user airband entry sitting next to it)
+than a general zone-name table.
+
+**Not yet confirmed, flagged so it isn't lost:** `Mounds` (`0x03600000`) sits right before a
+settings-looking pair — radio name `Maverick` (`0x03680000`) and owner name `Grant`
+(`0x03684000`), on a `0x4000` stride distinct from the `0x8000` stride the Sapulpa/Civil pair sits
+on. Also found `North...` at `0x03A00000`. None of these fully match a name on the user's list, and
+they don't share one consistent record stride with each other, so — unlike the channel table and
+the zone-membership list, which are both solid — **the zone *name* table location is still
+unresolved.** Widened sweeps immediately around these hits (`0x03000000`–`0x04400000` at both
+`0x4000` and `0x8000` strides) found nothing further.
+
+**Where this leaves things:** continuing to find the other 10 zone names, the 3 remaining airband
+zones, and the contact/radio-ID tables by blind probing works but has diminishing returns per
+sweep. The fastest way to close this out would be a byte-level reference — a Windows CPS raw/`.rdt`
+export of the known-good codeplug, if one still exists, would let us grep for exact known strings
+instead of guessing candidate address ranges. Worth revisiting that suggestion from the original
+Next Steps if the blind-probing pace becomes a bottleneck.
+
+---
+
 ## Update (2026-08-16, night) — repo now on GitHub; zone-list and roaming-table found
 
 **Housekeeping:**
