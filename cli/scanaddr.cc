@@ -7,9 +7,17 @@
 //
 // This tool NEVER calls AnytoneInterface::write(). It only ever calls read(). Temporary/diagnostic
 // - not meant to be upstreamed as-is.
+//
+// Supports multiple --range/--addr arguments per invocation, all served from a single
+// enter-program-mode/close session, since each invocation's connect/disconnect cycle costs the
+// radio a several-second settle time. Also supports --save to append every successful read to a
+// local cache file (address + 16 bytes hex, one per line) for later offline analysis (grep/python)
+// without touching the radio again.
 
 #include <QCoreApplication>
 #include <QCommandLineParser>
+#include <QFile>
+#include <QTextStream>
 #include <cstdio>
 #include <vector>
 
@@ -18,25 +26,69 @@
 #include "errorstack.hh"
 #include "logger.hh"
 
+struct Range { uint32_t start, end, stride; };
+
 int main(int argc, char *argv[]) {
   QCoreApplication app(argc, argv);
 
   QCommandLineParser parser;
   parser.addHelpOption();
   parser.addOptions({
-    {"start", "Start address (hex, no 0x prefix)", "start", "0"},
-    {"end", "End address (hex, no 0x prefix)", "end", "1000000"},
+    {"start", "Start address (hex, no 0x prefix)", "start"},
+    {"end", "End address (hex, no 0x prefix)", "end"},
     {"stride", "Stride between sampled 16-byte reads, in bytes (hex)", "stride", "1000"},
+    {"range", "Address range 'start:end:stride' (hex, no 0x prefix). Repeatable - all ranges "
+              "are served in one radio session.", "range"},
+    {"addr", "A single address to sample (hex, no 0x prefix). Repeatable.", "addr"},
     {"dump", "Print every 16-byte read, not just non-uniform/strong hits."},
+    {"save", "Append every successful read (address + 16 bytes hex) to this file, "
+              "for later offline analysis without touching the radio again.", "file"},
   });
   parser.process(app);
 
+  std::vector<Range> ranges;
+  std::vector<uint32_t> singles;
   bool ok = false;
-  uint32_t start = parser.value("start").toUInt(&ok, 16);
-  uint32_t end = parser.value("end").toUInt(&ok, 16);
-  uint32_t stride = parser.value("stride").toUInt(&ok, 16);
-  if (stride < 16) stride = 16;
+
+  if (parser.isSet("start") || parser.isSet("end")) {
+    uint32_t start = parser.value("start").isEmpty() ? 0 : parser.value("start").toUInt(&ok, 16);
+    uint32_t end = parser.value("end").isEmpty() ? start+0x1000000 : parser.value("end").toUInt(&ok, 16);
+    uint32_t stride = parser.value("stride").toUInt(&ok, 16);
+    if (stride < 16) stride = 16;
+    ranges.push_back({start, end, stride});
+  }
+  for (const QString &r : parser.values("range")) {
+    QStringList parts = r.split(':');
+    if (parts.size() != 3) {
+      fprintf(stderr, "Bad --range '%s', expected start:end:stride\n", r.toStdString().c_str());
+      return -1;
+    }
+    uint32_t start = parts[0].toUInt(&ok, 16);
+    uint32_t end = parts[1].toUInt(&ok, 16);
+    uint32_t stride = parts[2].toUInt(&ok, 16);
+    if (stride < 16) stride = 16;
+    ranges.push_back({start, end, stride});
+  }
+  for (const QString &a : parser.values("addr")) {
+    singles.push_back(a.toUInt(&ok, 16));
+  }
+
+  if (ranges.empty() && singles.empty()) {
+    fprintf(stderr, "Nothing to do - pass --start/--end, --range, and/or --addr.\n");
+    return -1;
+  }
+
   bool dumpAll = parser.isSet("dump");
+  QFile saveFile;
+  QTextStream saveStream;
+  if (parser.isSet("save")) {
+    saveFile.setFileName(parser.value("save"));
+    if (! saveFile.open(QIODevice::Append | QIODevice::Text)) {
+      fprintf(stderr, "Cannot open --save file '%s'\n", parser.value("save").toStdString().c_str());
+      return -1;
+    }
+    saveStream.setDevice(&saveFile);
+  }
 
   ErrorStack err;
   QList<USBDeviceDescriptor> ifaces = AnytoneMaverickInterface::detect(false);
@@ -51,8 +103,11 @@ int main(int argc, char *argv[]) {
     return -1;
   }
 
-  fprintf(stderr, "Scanning 0x%08x .. 0x%08x, stride 0x%x (%u samples)...\n",
-          start, end, stride, (end-start)/stride);
+  uint32_t totalSamples = 0;
+  for (auto &r : ranges) totalSamples += (r.end - r.start) / r.stride;
+  totalSamples += singles.size();
+  fprintf(stderr, "One session: %zu range(s), %zu single addr(s), ~%u samples total...\n",
+          ranges.size(), singles.size(), totalSamples);
 
   // BCD8-be decode of the first 4 bytes, same as AnytoneCodeplug::ChannelElement::rxFrequency().
   auto bcd8 = [](const uint8_t *b) -> long {
@@ -66,18 +121,25 @@ int main(int argc, char *argv[]) {
   };
 
   uint32_t nread=0, nerr=0, nhit=0, nstrong=0;
-  for (uint32_t addr = start; addr < end; addr += stride) {
+
+  auto processAddr = [&](uint32_t addr) {
     uint8_t buf[16];
     ErrorStack rerr;
     if (! iface.read(0, addr, buf, 16, rerr)) {
       nerr++;
-      continue;
+      return;
     }
     nread++;
-    // Skip boring fill patterns: all-same-byte.
+
+    if (saveStream.device()) {
+      saveStream << QString("%1:").arg(addr, 8, 16, QChar('0'));
+      for (int i=0; i<16; i++) saveStream << QString("%1").arg(buf[i], 2, 16, QChar('0'));
+      saveStream << "\n";
+    }
+
     bool allSame = true;
     for (int i=1; i<16; i++) if (buf[i] != buf[0]) { allSame = false; break; }
-    if (allSame && !dumpAll) continue;
+    if (allSame && !dumpAll) return;
 
     nhit++;
 
@@ -88,7 +150,7 @@ int main(int argc, char *argv[]) {
       for (int i=0; i<16; i++) printf("%c", (buf[i]>=32 && buf[i]<127) ? (char)buf[i] : '.');
       printf("|\n");
       fflush(stdout);
-      continue;
+      return;
     }
 
     // Strong signal 1: bytes 0..3 decode as a plausible VHF/UHF frequency (same encoding as
@@ -131,9 +193,15 @@ int main(int argc, char *argv[]) {
       printf("\n");
       fflush(stdout);
     }
-  }
+  };
 
-  fprintf(stderr, "Done. %u reads ok, %u errors, %u non-uniform hits, %u strong (freq/ascii) hits.\n",
+  for (auto &r : ranges)
+    for (uint32_t addr = r.start; addr < r.end; addr += r.stride)
+      processAddr(addr);
+  for (uint32_t addr : singles)
+    processAddr(addr);
+
+  fprintf(stderr, "Done. %u reads ok, %u errors, %u non-uniform hits, %u strong (freq/ascii/utf16) hits.\n",
           nread, nerr, nhit, nstrong);
 
   // Cleanly leave program mode / close, same as normal successful read path.

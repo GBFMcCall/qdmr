@@ -7,6 +7,86 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
+## Update (2026-08-16, very late) — BREAKTHROUGH: got a reference codeplug file, cracked the zone table
+
+**Tooling change first:** every `scanaddr` invocation pays for a full enter-program-mode /
+leave-program-mode cycle, and the radio needs a multi-second settle time afterward before it'll
+respond to a new session — so lots of small invocations back-to-back is slow and occasionally
+flaky ("No Maverick interface found" on a too-soon retry). Reworked `scanaddr` to serve many
+regions from **one** radio session:
+- `--range start:end:stride` is now repeatable — pass as many disjoint regions as needed and
+  they're all read in one connect/disconnect cycle.
+- `--addr` for one-off single addresses, also repeatable.
+- `--save FILE` appends every successful read (address + 16 bytes hex, one per line) to a local
+  cache file, so later analysis can grep/script against that file instead of going back to the
+  radio.
+- `--start/--end/--stride` still work standalone for the simple case.
+
+**Then the user provided something far more valuable than more probing:** a 13.8MB Windows CPS
+export, `Bridgecom_Maverick.rdt`, from a personal collection at `~/src/CodePlugs/` (a git repo of
+codeplug files for many radios — worth remembering that folder exists for future radio work). This
+is **not** a raw flash clone — its header literally starts with the strings `D890UV` / `V100`
+(matching the radio's own self-reported model/firmware), but its internal layout is a compact,
+padding-free CPS project format, encoded in single-byte Latin1/ASCII (not the live radio's
+UTF-16LE), totally different addressing from the live device. So it can't be used as a literal
+address-mapped reference — but it's an authoritative, complete, offline-searchable source of
+ground truth for everything the user actually programmed, and needed zero radio reads to mine.
+
+**Zone table — fully cracked and 100% validated.** Anchored on the string `"Maverick\0"` (radio
+name), followed by a `u16 LE` zone count (`12`, matches), then 12 back-to-back variable-length zone
+records:
+```
+[u8  channel_count]
+[channel_count × u16 LE channel index]
+[u16 LE selectedChannelA_index][u16 LE selectedChannelB_index]
+[NUL-terminated zone name, Latin1]
+[u8  trailer — appears to just be the zone's sequence number: 1,2,...,11,0]
+```
+Parsed all 12 records automatically and they match the user's real zone list **exactly**, in
+order, including channel counts:
+
+| # | Name | Channels | Notes |
+|---|------|----------|-------|
+| 0 | Mounds | 19 | indices `0,1,2,...,8,10,...,18,9` — **byte-for-byte identical** to the zone list already found live at device address `0x02000000`, including the same "9 appended at the end" ordering quirk. This cross-check is what confirms the live `0x02000000` table really is zone 0's member list. |
+| 1 | Analog | 21 | |
+| 2 | Tulsa So | 20 | |
+| 3 | PI | 22 | (stored uppercase; user calls it "Pi") |
+| 4 | Tulsa C | 18 | |
+| 5 | BikeRide | 7 | |
+| 6 | Preston | 2 | |
+| 7 | Mannford | 2 | |
+| 8 | Claremore | 14 | |
+| 9 | Bixby | 17 | |
+| 10 | Depew | 16 | |
+| 11 | Traveling | 2 | real spelling is "Traveling", not the "Travling" recalled from memory earlier |
+
+**Channel names — found essentially the whole list**, by scanning the channel-table region
+(`0x1A0`–`0x4740` in the file) for printable-run strings. ~163 real channel names recovered,
+organized by repeater/zone group exactly as expected from the zone names above: `RAB *` (16
+channels — Mounds' repeater), `LVT *` (Bartlesville-area repeater, ~20 channels), `Pi/PI *` (~20),
+`LVTc *` (~18), plus VFO/APRS/call channels, and per-town sets for the other zones (`Prs`
+Preston, `Man` Mannford, `CLR` Claremore, `Bix` Bixby, `Dep` Depew). A few 2-char false-positive
+matches (`XR`, `Pk`, `H-`, `tq`) are almost certainly binary field bytes that happened to land in
+printable ASCII range, not real names — expected noise from a generic printable-run scan, easy to
+filter by cross-checking against the zone lists.
+
+**What this does and doesn't solve:** this file's own internal encoding (Latin1 names, different
+per-record layout, no address correlation to the live device) isn't directly usable as the
+`D890UVCodeplug` memory map — that still has to come from the live radio, since that's what
+`dmrconf read` actually downloads over USB. But it removes essentially all the guesswork about
+*what* to look for: we now know the exact zone names, channel names, and zone/channel membership
+ground-truth, so the remaining live-radio probing (finding the 2nd channel bank and the other 11
+zones' storage on the actual device) can now search for exact known byte patterns instead of
+guessing candidate regions blind — which should be much faster than the trial-and-error sweeps
+earlier tonight.
+
+**Scripts used for all of the above** (not committed — quick throwaway analysis, easily
+reproduced): parse the DfuSe binary dump from `dmrconf read`, and separately grep/parse
+`Bridgecom_Maverick.rdt` for the zone-record structure described above. Worth writing a small
+proper `contrib/` script if this workflow gets reused.
+
+---
+
 ## Update (2026-08-16, later night) — zone/location names: one confirmed hit, rest still elusive
 
 User provided ground truth for cross-checking: the 12 real DMR zone names are **Mounds, Analog,
