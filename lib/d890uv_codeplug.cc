@@ -223,8 +223,25 @@ D890UVCodeplug::encodeChannels(const Flags &flags, Context &ctx, const ErrorStac
     n = Limit::numChannels();
   for (unsigned int i=0; i<n; i++) {
     ChannelElement ch(data(channelAddress(i)));
+
+    // Contacts and scan lists aren't decoded yet (see class documentation), so the Channel object
+    // being encoded carries no real information for these two fields. Round-trip validation
+    // showed the inherited fromChannelObj() was silently resetting real assignments to "none" -
+    // preserve whatever was already on the radio instead.
+    unsigned int savedContactIndex = ch.contactIndex();
+    unsigned int savedScanListIndex = ch.scanListIndex();
+
     if (! ch.fromChannelObj(ctx.get<Channel>(i), ctx))
       return false;
+
+    ch.setContactIndex(savedContactIndex);
+    ch.setScanListIndex(savedScanListIndex);
+
+    // The inherited fromChannelObj() computes the TX-offset field as an actual delta from RX,
+    // i.e. 0 for simplex channels. Round-trip validation showed this radio instead stores a full
+    // copy of the RX frequency there for simplex channels (not a zero offset) - restore that.
+    if (AnytoneCodeplug::ChannelElement::RepeaterMode::Simplex == ch.repeaterMode())
+      ch.setTXOffset(ch.rxFrequency());
   }
   return true;
 }

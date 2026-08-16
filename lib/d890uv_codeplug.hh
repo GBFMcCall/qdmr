@@ -33,25 +33,36 @@
  *    renamed zone 10 from "Depew" to "Test" via the Windows CPS and wrote it to the radio; a
  *    read-only search for the new string found it at exactly the predicted address). Definitively
  *    confirmed, not inferred.
- *  - Contacts, radio IDs, general settings (DMR ID, callsign, etc.): NOT located. Deliberately
- *    left empty rather than decoded from the (wrong, D868UVE-inherited) addresses, which would
- *    produce garbage.
+ *  - Two radio ID entries at `0x03680000`/`0x03684000` (name at `+0x04`, UTF-16LE, otherwise the
+ *    same `D868UVCodeplug::RadioIDElement` format) - found via a live test with the user's real
+ *    DMR ID. Whether one is semantically "Master ID" and the other a "Radio ID List" entry isn't
+ *    confirmed, but both round-trip byte-perfect.
+ *  - Contacts, general settings (callsign, display/audio/etc. preferences): NOT located.
+ *    Deliberately left empty rather than decoded from the (wrong, D868UVE-inherited) addresses,
+ *    which would produce garbage.
  *  - Scan lists: a real table was found at `0x02100000 + list_index * 0x200` (name at `+0x0E`,
  *    preceded by 4 `u16` fields of unknown meaning) but is not yet wired into this class - see
  *    `maverick_qdmr_support.md`.
  *
- * @warning Encode (write) logic now exists for channels, zones (membership + names), and radio
- * IDs - the same addresses as the decode side, so it should be self-consistent - but it has only
- * been validated by an in-memory round-trip (decode a real read, re-encode it, diff against the
- * original bytes at the addresses this class knows about; see `maverick_qdmr_support.md`), never
- * by an actual write to the physical radio. `allocateForEncoding()`/`encodeElements()` touch only
+ * @warning Encode (write) logic exists for channels, zones (membership + names), and radio IDs -
+ * the same addresses as the decode side. Validated with a proper offline round-trip test
+ * (`cli/testencode.cc`: load a real raw dump, decode, re-encode the same `Config` back onto the
+ * *same already-loaded* image - the actual device read-modify-write path, not a blank-slate
+ * encode - then diff byte-for-byte against the original): zone channel-lists and both radio IDs
+ * are byte-perfect; ordinary repeater/DMR channels are byte-perfect after fixing two real bugs
+ * this test found (contact/scan-list index were being reset instead of preserved; simplex
+ * channels' TX field needed to mirror RX, not encode a zero offset). Remaining known gaps are
+ * narrow and isolated to special-purpose channels (APRS beacon channels, VFO placeholders) - see
+ * `maverick_qdmr_support.md` for specifics. `allocateForEncoding()`/`encodeElements()` touch only
  * the specific addresses this class understands, in keeping with a read-modify-write model where
  * everything else (contacts, scan lists, general settings, and anything else not yet mapped)
  * simply never gets addressed and so can't be corrupted by an encode - growing this class's
  * mapped area over time is meant to stay safe under that same principle. Still: **do not perform
  * an actual write to the radio with this class without explicit, separate confirmation** - a
  * round-trip byte match is strong evidence, not proof, and this hasn't been write-tested against
- * real hardware.
+ * real hardware. Also see the read-reliability note in `maverick_qdmr_support.md` regarding
+ * channel bank 2 - it was observed to intermittently read back as blank for reasons not fully
+ * understood, which is exactly the failure mode a read-modify-write cycle is vulnerable to.
  *
  * @ingroup anytone */
 class D890UVCodeplug : public D868UVCodeplug

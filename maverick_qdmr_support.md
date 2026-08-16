@@ -7,6 +7,45 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
+## Update (2026-08-16, night, MILESTONE 6) — channel encode gaps closed for ordinary channels
+
+Fixed the two concrete issues the round-trip validator found earlier, in `encodeChannels()`:
+1. **Contact index (`+0x14`) and scan-list index (`+0x1b`) are now preserved**, not reset. Since
+   neither is decoded yet, `Config`'s `Channel` object has no real data for them; the fix saves
+   the original raw bytes before calling the inherited `fromChannelObj()` and restores them
+   afterward, rather than letting them get overwritten with "none" sentinels.
+2. **Simplex channels' TX field now mirrors RX**, matching what the radio actually stores (a full
+   copy of the RX frequency, not a zero offset) - `fromChannelObj()` computes a `tx - rx` delta,
+   correctly `0` for simplex, but this radio's real convention isn't "store 0", it's "store RX
+   again". Fixed by explicitly copying `rxFrequency()` into the TX-offset field whenever
+   `repeaterMode() == Simplex`.
+
+**Re-validated with a fresh ground-truth read** (via the same offline `testencode` tool as before -
+load real bytes, decode, re-encode onto the same image, diff): **mismatched bytes dropped from
+937 to 17, across just 9 of 189 elements** (was 158). Every ordinary repeater/DMR channel (`RAB`,
+`LVT`, `Pi`, `Bix`, `Dep`, etc.) now round-trips byte-perfect.
+
+**What's left, all confirmed to be special-purpose channels, not regular ones:**
+- 4 APRS-beacon channels (`RAB APRS` and 3 others) differ at `+0x21`/`+0x35` - likely APRS
+  system/beacon-related bits our `Config` model doesn't capture yet. Not investigated further.
+- The two `Channel VFO A`/`Channel VFO B` placeholder entries differ at `+0x08` (bandwidth bit) -
+  narrow, VFO-specific.
+- The two `EU APRS Transmit`/`EU APRS Receive` channels now show the *opposite* problem: ground
+  truth has `0x00` at the TX field (not a mirrored RX), so the new simplex-mirror fix over-applies
+  to these two specifically - the "always mirror for simplex" rule isn't quite universal. Narrow,
+  known edge case.
+- The Traveling zone's channel list shows a truncation at the position of the user's test channel
+  (index 163, one past `Limit::numChannels()=163`) - expected, not a bug: our decode simply
+  doesn't represent channels beyond the documented limit, so re-encoding correctly reflects a
+  163-channel view of what's currently a 164-channel codeplug on the radio.
+
+Given the remaining gaps are narrow and isolated to channel types the user is unlikely to be
+creating (APRS beacons, VFOs), this is a reasonable point to consider channel encoding "safe
+enough for ordinary channels" - though still **not to be used for an actual radio write** without
+further explicit confirmation, per the class's standing warning.
+
+---
+
 ## Update (2026-08-16, night, MILESTONE 5) — new-channel test resolves the bank-2 question decisively
 
 User's suggestion, in response to the bank-2 read-reliability scare: rather than keep guessing at
