@@ -7,6 +7,50 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
+## Update (2026-08-16, afternoon) — general settings / boot text: not found yet, blocked
+
+Went looking for general settings using two known anchor values the user provided: the Power-On
+Display text (line 1 `"WELCOME"` + 7 spaces, line 2 `"KC1KCE"` + 8 spaces) and TOT = 120s. This is
+the same "known value" search technique that successfully located zone names and the radio ID
+table earlier - it just hasn't paid off yet for settings.
+
+**Searched, read-only, all negative:**
+- `0x02500000-0x02600000` (D868UVE's inherited `settings()`/`bootSettings()` addresses), fully
+  dense (stride 0x10, every byte covered) - no match for `"WELCOME"`/`"KC1KCE"` in UTF-16LE or
+  ASCII. The only non-blank content in this 1MB region is two tiny fragments (7 bytes each) that
+  don't look like real settings data (short numeric runs like `06 05 04 03 02 01 00`, surrounded
+  by erased/`0xFF` flash on all sides) - almost certainly leftover noise, not a settings struct.
+- `0x02600000-0x02a00000`, moderate stride (0x800) - clean, nothing.
+- `0x03680000-0x03690000` and `0x036c0000-0x036d0000` (the radio-ID neighborhood, since radio ID
+  name fields turned out to live there) - dense, nothing. (Confirmed `"Maverick"`/`"Grant"` *are*
+  correctly readable at `0x03680004`/`0x03684004` as expected, so the search method itself is
+  sound - this is a real negative, not a script bug.)
+- `0x02200000-0x02500000`, coarse stride (0x1000) - essentially all erased flash, one unrelated
+  fragment at `0x024c0000` (matches D868UVE's `fiveToneIdList()` address exactly, so likely
+  legitimate 5-tone config data, not general settings).
+- A broad 32MB sparse cache from earlier in the session (`0x0-0x8000000`, ~9% coverage) - no hits,
+  though sparse coverage means this one isn't conclusive on its own.
+
+**Interesting side-finding, not yet understood:** the zone-name table content (`"Mounds"`,
+`"Analog"`, ...) and the radio-ID records (`"Maverick"`, `"Grant"`) both appear to exist *twice*,
+at their known address and again exactly `0x40000` bytes higher (`0x03600000` ↔ `0x03640000`,
+`0x03680000` ↔ `0x036c0000`, byte-identical). Not investigated further yet - could be a mirror/
+backup sector, could be meaningful (e.g. two banks, echoing the channel bank split) - but it's not
+where the boot text is either, since neither copy contains it.
+
+**Conclusion:** general settings are not living at any of the addresses the existing D868UVE
+layout, or its immediate neighborhood, would suggest - like channels/zones/radio IDs, they've been
+relocated somewhere else on this radio's memory map, and undirected scanning isn't going to find a
+small struct efficiently. The technique that broke every other deadlock this session (zone names,
+scan lists, bank 2) was a **live before/after edit on the physical radio** - changing one field via
+the Windows CPS and diffing a fresh read against the previous one. That's almost certainly the
+fastest way to find this too: e.g., change TOT from 120s to some other value (60s or 90s), or
+change one line of the Power-On Display text, write it from the CPS, and a diff of two full reads
+will show exactly which address changed. No radio-side action needed from this end until that's
+done - purely read-only either way.
+
+---
+
 ## Update (2026-08-16, night, MILESTONE 7) — scan-list names decoded
 
 Added minimal scan-list decode using the table found earlier while hunting zone names
