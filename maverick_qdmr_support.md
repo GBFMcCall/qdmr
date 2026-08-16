@@ -7,6 +7,82 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
+## Update (2026-08-16, very very late) — all 12 zones fully mapped and validated on the live radio
+
+**Goal for this pass** (per user): read zones, channels, and radio settings correctly at minimum;
+eventual goal is full read/write for channels/zones (add, edit, change frequencies) without
+touching anything QDMR doesn't understand (e.g. airband) — **still read-only until further
+notice.**
+
+**Zones: DONE.** Used the reference file's exact channel-index lists per zone as known values to
+search for on the live radio, rather than guessing. Result: **the live zone-list table is at
+`0x02000000`, one record per zone, at a fixed `0x200`-byte stride** —
+`zone_addr = 0x02000000 + zone_index × 0x200`. Confirmed by directly reading all 12 slots and
+diffing against the file's data — **every single one matches exactly**:
+
+| Zone | Live address | First few indices (live) | Matches file? |
+|---|---|---|---|
+| 0 Mounds | `0x02000000` | `0,1,2,3,4,5,6,7...` | ✅ |
+| 1 Analog | `0x02000200` | `19,20,21,22,23,24,25,26` | ✅ |
+| 2 Tulsa So | `0x02000400` | `40,41,42,43,44,45,46,47` | ✅ |
+| 3 PI | `0x02000600` | `60,61,62,63,64,66,67,68` | ✅ (note the 65-skip, matches file) |
+| 4 Tulsa C | `0x02000800` | `82,83,84,85,86,87,88,89` | ✅ |
+| 5 BikeRide | `0x02000a00` | `101,102,103,104,105,106,107` | ✅ |
+| 6 Preston | `0x02000c00` | `108,109` | ✅ |
+| 7 Mannford | `0x02000e00` | `110,111` | ✅ |
+| 8 Claremore | `0x02001000` | `112,113,...,119` (first 8 of 14) | ✅ |
+| 9 Bixby | `0x02001200` | `126,127,128,129,130,131,132,133` | ✅ — crosses into channel index 128+ |
+| 10 Depew | `0x02001400` | `143,144,...,150` (first 8 of 16) | ✅ |
+| 11 Traveling | `0x02001600` | `161,162` | ✅ |
+
+Each slot: list of `u16 LE` channel indices, `0xFFFF`-terminated/padded, matching the format
+already established from zone 0. This is a complete, high-confidence result — ready to implement
+in `D890UVCodeplug`.
+
+**Channels: bank 1 confirmed complete (128 of ~163), bank 2 still not located despite a real
+search effort.** Cross-referencing the reference file (which gives exact frequency + name + BCD
+encoding for every real channel — see below) against zone 9 "Bixby"'s live index list
+(`126,127,128,129,...`) confirms **channel index 128 exists and is referenced**, but its physical
+storage location was not found this session. Things tried and ruled out:
+- Immediately after bank 1 (`0x00FC4000` onward): blank (confirmed multiple times).
+- Immediately before bank 1 (`0x00F80000`–`0x00FC0000`): blank.
+- The "obvious" `+0x40000` bank-stride guess (`0x01000000`) and several further multiples
+  (`0x01040000`, `0x01080000`, `0x010C0000`): all **exact mirrors of bank 1**, not new data — this
+  region seems to alias broadly, not just at one paired offset.
+- Smaller nearby offsets (`0x00FC8000`, `0x00FD0000`, `0x00FE0000`, `0x00FF0000`): blank.
+- Right after the zone table (`0x02001800`–`0x02002000`): blank.
+- A `0x100`-stride guess for zone spacing (superseded by the correct `0x200` finding above) and a
+  wide, coarse (`0x1000`-stride) sweep of `0x00000000`–`0x08000000`: no second bank found; that
+  region is dominated by firmware/font data and the built-in worldwide contact database, both
+  already characterized as unrelated.
+
+**Radio settings: partially found.** Confirmed a settings-string area with one field per
+`0x4000`-byte slot: radio name `"Maverick"` at `0x03680000` and owner name `"Grant"` at
+`0x03684000` (each record starts with an identical 4-byte prefix `03 15 89 93`, presumably some
+kind of field-type tag). **Not yet found: the DMR radio ID number itself** — the reference file's
+own ID field looks like placeholder/demo data (`12345678`, callsign `KC1KCE`, name `WELCOME`), not
+directly useful for finding the real one live. Also still open: contacts (the file has a real
+contact list — `"Contact1"` etc. visible right after the zone table around file offset `0x4b50` —
+not yet cross-referenced against the live device at all).
+
+**Reference-file frequency encoding, decoded and validated** (useful context for anyone continuing
+this): channel records in the `.rdt` file store RX frequency as a **plain `u32 LE`, in units of
+10Hz** (not BCD like the live device) at a fixed 46-byte offset before the name string, followed 4
+bytes later by TX offset in the same units, with a direction byte in between (`0`=simplex,
+`1`=+, `2`=-). Cross-decoded all ~165 real channels this way (frequencies, names, and TX
+direction/offset) purely offline — zero radio reads needed for that part. Full list not
+reproduced here in full (mostly real callsigns/personal channel names) but is fully reproducible
+from `Bridgecom_Maverick.rdt` with the method above.
+
+**Where this leaves the D890UVCodeplug work:** zones are done and channel bank 1 (128/163 real
+channels) is fully understood (base `0x00FC0000`, `0x80`-byte records, RX BCD @ `+0x00`, TX offset
+BCD @ `+0x04`, UTF-16LE name @ `+0x44`). That's enough to implement a real, working partial decode
+right now. Bank 2 (channels 128–162), the DMR ID, and contacts remain open — worth deciding whether
+to keep hunting those before writing code, or implement what's solid now and treat the rest as
+follow-up.
+
+---
+
 ## Update (2026-08-16, very late) — BREAKTHROUGH: got a reference codeplug file, cracked the zone table
 
 **Tooling change first:** every `scanaddr` invocation pays for a full enter-program-mode /
