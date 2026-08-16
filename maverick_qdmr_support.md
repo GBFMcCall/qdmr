@@ -7,6 +7,26 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
+## Update (2026-08-16, night) — next phase: working toward write-readiness
+
+User direction for this phase: skip contacts entirely for now (tens of thousands of entries in
+the built-in DB, not worth the effort at this stage). Focus instead on radio ID, general settings,
+and anything else needed to eventually create a new channel and write it to the radio. Channel
+membership in zones is already done (see MILESTONE 3 below) - not additional work needed there.
+
+**Channel bank 2 has room to grow.** Checked from the end of its 35 real channels (`0x010C1180`)
+out to `0x010C4000` (matching bank 1's block size) - entirely blank. Both banks use simple
+sequential fill with no bitmap gating which slots are "in use" (consistent with everything found
+so far - this radio doesn't seem to rely on the bitmap-driven allocation D868UVE uses at all).
+Good sign for channel creation: a new channel likely just needs to go in the next open slot,
+without first needing to solve a capacity or indexing puzzle.
+
+**Asked the user for their radio's real DMR ID** to search for directly, the same way the zone-name
+table was found via a known exact value - much faster than blind sweeping. Radio-ID search paused
+pending that.
+
+---
+
 ## Update (2026-08-16, night, MILESTONE 3) — zone names found via a live before/after test; complete
 
 Blind sweeping (previous entry) never found the zone-name table because it doesn't follow the
