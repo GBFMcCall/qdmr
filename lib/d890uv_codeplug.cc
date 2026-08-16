@@ -46,6 +46,23 @@ D890UVCodeplug::RadioIDElement::setName(const QString &name) {
 
 
 /* ******************************************************************************************** *
+ * Implementation of D890UVCodeplug::ScanListElement
+ * ******************************************************************************************** */
+D890UVCodeplug::ScanListElement::ScanListElement(uint8_t *ptr)
+  : Element(ptr, ScanListElement::size())
+{
+  // pass...
+}
+
+QString
+D890UVCodeplug::ScanListElement::name() const {
+  // Name length not independently verified beyond what's been observed in real data (up to 10
+  // chars, e.g. "Tulsa Cntr") - 16 matches the convention used everywhere else on this radio.
+  return readUnicode(Offset::name(), 16, 0x0000);
+}
+
+
+/* ******************************************************************************************** *
  * Implementation of D890UVCodeplug
  * ******************************************************************************************** */
 D890UVCodeplug::D890UVCodeplug(QObject *parent)
@@ -79,12 +96,13 @@ D890UVCodeplug::setBitmaps(Context &ctx) {
 void
 D890UVCodeplug::allocateForDecoding() {
   // Only allocate what has actually been independently verified on the live device. Deliberately
-  // does NOT call the inherited allocateContacts()/allocateScanLists()/allocateGeneralSettings()/
-  // etc - those target D868UVE addresses that read back as blank or unrelated data on this radio
-  // (see maverick_qdmr_support.md).
+  // does NOT call the inherited allocateContacts()/allocateGeneralSettings()/etc - those target
+  // D868UVE addresses that read back as blank or unrelated data on this radio (see
+  // maverick_qdmr_support.md).
   this->allocateChannels();
   this->allocateZones();
   this->allocateRadioIDs();
+  this->allocateScanLists();
 }
 
 void
@@ -161,6 +179,8 @@ D890UVCodeplug::createElements(Context &ctx, const ErrorStack &err) {
   if (! this->createChannels(ctx, err))
     return false;
   if (! this->createZones(ctx, err))
+    return false;
+  if (! this->createScanLists(ctx, err))
     return false;
   return true;
 }
@@ -328,6 +348,27 @@ D890UVCodeplug::encodeZones(const Flags &flags, Context &ctx, const ErrorStack &
     for (int j=0; (j<zone->A()->count()) && ((unsigned int)j<maxChannels); j++) {
       channels[j] = qToLittleEndian((uint16_t)ctx.index(zone->A()->get(j)->as<Channel>()));
     }
+  }
+  return true;
+}
+
+
+void
+D890UVCodeplug::allocateScanLists() {
+  for (uint16_t i=0; i<Limit::numScanLists(); i++) {
+    uint32_t addr = Offset::scanLists() + i*ScanListElement::size();
+    if (! isAllocated(addr, 0))
+      image(0).addElement(addr, ScanListElement::size());
+  }
+}
+
+bool
+D890UVCodeplug::createScanLists(Context &ctx, const ErrorStack &err) {
+  Q_UNUSED(err)
+  for (uint16_t i=0; i<Limit::numScanLists(); i++) {
+    ScanListElement sl(data(Offset::scanLists() + i*ScanListElement::size()));
+    ScanList *obj = new ScanList(sl.name());
+    ctx.config()->scanlists()->add(obj); ctx.add(obj, i);
   }
   return true;
 }

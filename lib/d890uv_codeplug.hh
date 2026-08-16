@@ -131,6 +131,38 @@ public:
     };
   };
 
+  /** Scan list element for the BridgeCom Maverick.
+   *
+   * @warning Only the name is understood. The record has a 14-byte header before the name whose
+   * fields are not decoded (probably priority-channel/channel-count information, analogous to
+   * `AnytoneCodeplug::ScanListElement`, but the field layout doesn't match that class closely
+   * enough to reuse it - see `maverick_qdmr_support.md`). Channel membership within a scan list
+   * is not read. Only 7 populated slots have been found/confirmed (`0x02100000` +
+   * `i * 0x200`, `i` = 0..6); the real capacity, if this is an array at all rather than
+   * independently-placed entries, is unknown. Decode-only - no encode side, since writing to a
+   * mostly-not-understood record risks corrupting fields we can't currently reconstruct. */
+  class ScanListElement: public Element
+  {
+  public:
+    /** Constructor. */
+    explicit ScanListElement(uint8_t *ptr);
+
+    /** Returns the size of the element (the full 0x200 slot, though only a small prefix is
+     *  understood). */
+    static constexpr unsigned int size() { return 0x0200; }
+
+    /** Returns the name of the scan list (UTF-16LE, NUL-terminated, at +0x0E). */
+    QString name() const;
+
+  protected:
+    /** Internal used offsets within the scan list element. */
+    struct Offset: public Element::Offset {
+      /// @cond DO_NOT_DOCUMENT
+      static constexpr unsigned int name() { return 0x000E; }
+      /// @endcond
+    };
+  };
+
 public:
   /** Constructor. */
   explicit D890UVCodeplug(QObject *parent=nullptr);
@@ -197,6 +229,11 @@ protected:
   /** Writes the zone name to the device. */
   void setZoneName(uint16_t i, const QString &name);
 
+  /** Allocates the 7 known scan-list slots (see @c ScanListElement documentation - no bitmap or
+   *  confirmed capacity, just the slots found so far). Decode-only, no encode side. */
+  void allocateScanLists();
+  bool createScanLists(Context &ctx, const ErrorStack &err);
+
 protected:
   /** Limits specific to what's actually been mapped on this radio so far. */
   struct Limit: public D868UVCodeplug::Limit {
@@ -211,6 +248,9 @@ protected:
      *  capacity of this table (if it's an array at all, rather than two independently-placed
      *  settings fields) is not known. */
     static constexpr unsigned int numRadioIDs() { return 2; }
+    /** Only 7 populated scan-list slots have been found/confirmed (see @c ScanListElement
+     *  documentation) - the real capacity is not known. */
+    static constexpr unsigned int numScanLists() { return 7; }
   };
 
   /** Offsets specific to this radio's real, independently-verified memory map (see class
@@ -223,6 +263,10 @@ protected:
     // betweenZoneChannels() (0x200) matches the inherited D868UVE default - no override needed.
     static constexpr unsigned int zoneNames() { return 0x03600000; }
     static constexpr unsigned int betweenZoneNames() { return 0x0040; }
+    /** Base address of the scan-list table (see @c ScanListElement documentation) - distinct
+     *  from the inherited D868UVE @c scanListBanks(), which does not apply to this radio. Uses
+     *  the same `0x200` stride as @c betweenZoneChannels(), reused rather than redefined. */
+    static constexpr unsigned int scanLists() { return 0x02100000; }
     /// @endcond
   };
 };

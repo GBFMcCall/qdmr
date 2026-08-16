@@ -7,6 +7,25 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
+## Update (2026-08-16, night, MILESTONE 7) — scan-list names decoded
+
+Added minimal scan-list decode using the table found earlier while hunting zone names
+(`0x02100000 + i * 0x200`, `i` = 0..6, name at `+0x0E`). Decode-only, name-only, by design: the
+14-byte header before the name isn't understood (likely priority-channel/count fields, but the
+layout doesn't match `AnytoneCodeplug::ScanListElement` closely enough to reuse it), and channel
+membership within a scan list isn't read either - writing to a mostly-not-understood record risks
+corrupting fields we can't reconstruct, so there's deliberately no encode side for this yet.
+
+Verified against the live radio: all 7 scan lists appear with their correct names (`Analog`, `Pi`,
+`RAB`, `Tulsa So`, `Tulsa Cntr`, `Claremore`, `Bixby`), `channels: []` honestly reflecting that
+membership isn't decoded rather than guessing.
+
+This also means a channel's `scanListIndex` (preserved but not resolved - see the previous
+update) at least has a real, named `ScanList` object it *could* eventually resolve to once that
+linking is implemented, rather than pointing at nothing.
+
+---
+
 ## Update (2026-08-16, night, MILESTONE 6) — channel encode gaps closed for ordinary channels
 
 Fixed the two concrete issues the round-trip validator found earlier, in `encodeChannels()`:
