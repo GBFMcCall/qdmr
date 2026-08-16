@@ -474,11 +474,13 @@ AnytoneMaverickInterface::identifier(const ErrorStack &err) {
   if (! _info.isValid())
     return RadioInfo();
   // Confirmed live against a physical BridgeCom Maverick: the radio identifies itself over this
-  // protocol as "D890UV". There is no dedicated RadioInfo entry for that BridgeCom-branded model
-  // name -- it is AnyTone's D868UVE hardware/firmware family (same memory layout; the Maverick's
-  // CPS init file is even named "D868UVE_20.rdt"), so map it onto the existing D868UVE support.
+  // protocol as "D890UV". Originally mapped onto the existing D868UVE support (same programming
+  // protocol, and the Maverick's CPS init file is even named "D868UVE_20.rdt"), but the actual
+  // codeplug memory map turned out to differ substantially from real D868UVE hardware (different
+  // base addresses, record sizes, and UTF-16LE names) - see D890UVCodeplug and
+  // maverick_qdmr_support.md. Uses its own RadioInfo entry and codeplug class now.
   if ("D890UV" == _info.name) {
-    return RadioInfo::byID(RadioInfo::D868UVE);
+    return RadioInfo::byID(RadioInfo::D890UV);
   } else if ("D868UVE" == _info.name) {
     return RadioInfo::byID(RadioInfo::D868UVE);
   } else if ("D6X2UV" == _info.name) {

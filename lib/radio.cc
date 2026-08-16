@@ -21,6 +21,7 @@
 #include "openuv380.hh"
 #include "openrtx.hh"
 #include "d868uv.hh"
+#include "d890uv.hh"
 #include "d878uv.hh"
 #include "d878uv2.hh"
 #include "d578uv.hh"
@@ -119,7 +120,9 @@ Radio::detect(const USBDeviceDescriptor &descr, const RadioInfo &force, const Er
     auto anytone = new AnytoneMaverickInterface(descr, err);
     if (anytone->isOpen()) {
       RadioInfo id = anytone->identifier(err);
-      if ((id.isValid() && (RadioInfo::D868UVE == id.id())) || (force.isValid() && (RadioInfo::D868UVE == force.id()))) {
+      if ((id.isValid() && (RadioInfo::D890UV == id.id())) || (force.isValid() && (RadioInfo::D890UV == force.id()))) {
+        return new D890UV(anytone);
+      } if ((id.isValid() && (RadioInfo::D868UVE == id.id())) || (force.isValid() && (RadioInfo::D868UVE == force.id()))) {
         return new D868UV(anytone);
       } if ((id.isValid() && (RadioInfo::D878UV == id.id())) || (force.isValid() && (RadioInfo::D878UV == force.id()))) {
         return new D878UV(anytone);

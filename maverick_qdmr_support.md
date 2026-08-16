@@ -7,6 +7,78 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
+## Update (2026-08-16, night, MILESTONE) — first real, working read from the live radio
+
+**`dmrconf read` now produces a correct, real decode of this radio for the first time.** New
+files `lib/d890uv_codeplug.{hh,cc}` (the actual memory-map fix) and `lib/d890uv.{hh,cc}` (radio
+wrapper, mirrors `d868uv.{hh,cc}`), plus a `RadioInfo::D890UV` entry and updated dispatch so the
+radio identifies as "BridgeCom Maverick" instead of being silently mapped onto D868UVE. Verified:
+
+```
+$ dmrconf -V read out.yaml
+```
+succeeds (exit 0) against the physical radio and produces a YAML config with:
+- **128 real channels**, correct names and frequencies, e.g. `RAB OKWtr` at 444.85/449.85 MHz -
+  matching the reference file exactly, in the same order (`RAB *` → `2 M Call`/`70 CM Call` →
+  `APRS *` → `Suprlnk *` → callsign channels → `LVT *` → `Pi/PI *` → `LVTc *` → `Prs/Man/CLR/Bix *`).
+- **Channel *mode* (DMR vs analog) decodes correctly** without ever being independently verified
+  field-by-field - inherited the D868UVE live bit-layout unmodified (see `D890UVCodeplug`
+  doc-comment) and it happens to be right: the RAB group decodes `dmr:`, and it correctly flips to
+  `fm:` exactly at `2 M Call` / `70 CM Call` - real analog National Simplex calling frequencies.
+  Strong independent confirmation the byte-0x08 region carries over unchanged from D868UVE.
+- **All 12 zones**, correct channel membership, gracefully incomplete where it should be: zones
+  that reference channel indices ≥128 (Bixby, Depew, Traveling) correctly show only their
+  in-range channels (or empty) rather than crashing or inventing data, since bank 2 isn't mapped.
+  Zone *names* show as placeholder `Zone 1`..`Zone 12` (real names not yet located - see below).
+- **Contacts, radio IDs, scan lists, group lists, general settings**: empty/default, as intended -
+  deliberately not decoded from unverified addresses rather than showing garbage.
+
+**Implementation approach:** `D890UVCodeplug` subclasses `D868UVCodeplug` (inherits its full,
+already-implemented `GeneralSettingsElement`/etc. interface for free - reimplementing that from
+`AnytoneCodeplug` directly would mean reimplementing hundreds of pure-virtual methods) and
+overrides only:
+- `allocateBitmaps()` → no-op (no live bitmap table is trusted; see history above for why - they
+  read back as 100% "in use").
+- `allocateForDecoding()` / `createElements()` / `linkElements()` → call *only* the channel and
+  zone methods below, skipping every other D868UVE subsystem entirely (rather than inheriting
+  D868UVE's bitmap-driven contact/radio-ID/scan-list/etc. handling, which would read garbage from
+  wrong addresses on this radio).
+- `allocateChannels()`/`createChannels()`/`linkChannels()` → unconditional loop over 128 fixed
+  channels at `0x00FC0000`, `0x80` bytes/record (no bitmap check).
+- `allocateZones()`/`createZones()`/`linkZones()` → unconditional loop over 12 fixed zones at
+  `0x02000000 + i*0x200`; channel indices ≥ `Limit::numChannels()` are silently skipped via the
+  existing `ctx.has<Channel>()` check, which is what produces the graceful "empty until bank 2 is
+  found" zone behavior above for free.
+- `ChannelElement` → same base class as D868UVE (inherits `rxFrequency()`/`txOffset()`/mode/
+  power/colorCode/timeslot bit-decoding unmodified - offsets `0x00`/`0x04`/`0x08` etc. are shared),
+  only overrides `size()` (`0x80`) and `name()`/`setName()` (UTF-16LE @ `+0x44` via
+  `readUnicode`/`writeUnicode`, instead of Latin1 @ `+0x23`).
+- `setBitmaps()` → no-op (encode path, unused - read-only, see warning below).
+
+**Known limitations, all documented in the new files' doc-comments so anyone continuing this has
+it in context, not just here:**
+1. Channel bank 2 (channels 129-163) not located - those channels don't appear at all; zones that
+   reference them show fewer channels than real, or empty.
+2. Zone names are placeholders (`Zone N`) - the real zone-name table hasn't been found on the live
+   device (checked the rest of each zone's `0x200` slot specifically - not there).
+3. Contacts, radio ID(s), scan lists, group lists, and general settings (DMR ID, callsign,
+   display/audio/etc. preferences) are not read at all - the YAML's `settings:` section shows
+   `Config`'s built-in defaults, not anything from the radio.
+4. Per-channel fields beyond name/frequency (color code, timeslot, admit, power, bandwidth,
+   contact index) use the *inherited* D868UVE bit-layout at `+0x08` etc., which is a
+   reasonable-confidence inference (validated indirectly via the DMR/analog mode split matching
+   real-world channel naming) but not independently, field-by-field verified the way frequency and
+   name are. Log noise on read (`Cannot resolve contact index N for channel X`) is expected and
+   harmless - it's `linkChannelObj()` (inherited, unmodified) trying to resolve digital contact
+   references against the empty contact list from point 3; it doesn't stop the read from
+   succeeding.
+
+**Still absolutely read-only.** `setBitmaps()`/the encode path are no-ops/inherited-but-unused;
+`D890UVCodeplug`'s doc-comment states explicitly not to attempt writes with it - the encode path
+targets D868UVE addresses, unmodified, and would corrupt the radio if actually invoked.
+
+---
+
 ## Update (2026-08-16, very very late) — all 12 zones fully mapped and validated on the live radio
 
 **Goal for this pass** (per user): read zones, channels, and radio settings correctly at minimum;

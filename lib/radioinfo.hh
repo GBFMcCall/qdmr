@@ -39,6 +39,9 @@ public:
     D578UV,
     D578UVII = D578UV,
     D168UV,
+    /** BridgeCom Maverick, rebadged AnyTone AT-D890UV. Read-only, partial support - see
+     *  @c D890UVCodeplug. */
+    D890UV,
     // Baofeng/BTECH
     DM1701, RT84 = DM1701,
     DR1801UV,

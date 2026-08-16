@@ -10,6 +10,7 @@
 #include "uv390.hh"
 #include "md2017.hh"
 #include "d868uv.hh"
+#include "d890uv.hh"
 #include "d878uv.hh"
 #include "d878uv2.hh"
 #include "d578uv.hh"
@@ -41,6 +42,7 @@ RadioInfo::_radiosByName = QHash<QString, RadioInfo::Radio>{
   {"rt84",      RadioInfo::RT84},
   {"d868uv",    RadioInfo::D868UV},
   {"d868uve",   RadioInfo::D868UVE},
+  {"d890uv",    RadioInfo::D890UV},
   {"dmr6x2uv",  RadioInfo::DMR6X2UV},
   {"dmr6x2uv2", RadioInfo::DMR6X2UV2},
   {"d878uv",    RadioInfo::D878UV},
@@ -65,6 +67,7 @@ RadioInfo::_radiosById = QHash<unsigned, RadioInfo>{
   {RadioInfo::MD2017,    MD2017::defaultRadioInfo()},
   {RadioInfo::DM1701,    DM1701::defaultRadioInfo()},
   {RadioInfo::D868UVE,   D868UV::defaultRadioInfo()},
+  {RadioInfo::D890UV,    D890UV::defaultRadioInfo()},
   {RadioInfo::D878UV,    D878UV::defaultRadioInfo()},
   {RadioInfo::D878UVII,  D878UV2::defaultRadioInfo()},
   {RadioInfo::D578UV,    D578UV::defaultRadioInfo()},

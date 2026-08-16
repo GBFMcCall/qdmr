@@ -39,6 +39,7 @@ qt_add_library(libdmrconf SHARED
   anytone_interface.cc anytone_radio.cc anytone_codeplug.cc anytone_extension.cc anytone_limits.cc
   anytone_satelliteconfig.cc anytone_settingsextension.cc
   d868uv.cc d868uv_codeplug.cc d868uv_callsigndb.cc d868uv_limits.cc
+  d890uv.cc d890uv_codeplug.cc
   d878uv.cc d878uv_codeplug.cc d878uv_limits.cc
   d578uv.cc d578uv_codeplug.cc d578uv_limits.cc
   d878uv2.cc d878uv2_codeplug.cc d878uv2_limits.cc d878uv2_callsigndb.cc
@@ -81,6 +82,7 @@ target_sources(libdmrconf PUBLIC FILE_SET HEADERS
   anytone_interface.hh anytone_radio.hh anytone_codeplug.hh anytone_extension.hh anytone_limits.hh
   anytone_satelliteconfig.hh anytone_settingsextension.hh
   d868uv.hh d868uv_codeplug.hh d868uv_callsigndb.hh d868uv_limits.hh
+  d890uv.hh d890uv_codeplug.hh
   d878uv.hh d878uv_codeplug.hh d878uv_limits.hh
   d578uv.hh d578uv_codeplug.hh d578uv_limits.hh
   d878uv2.hh d878uv2_codeplug.hh d878uv2_limits.hh d878uv2_callsigndb.hh
