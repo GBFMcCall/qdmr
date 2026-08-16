@@ -25,3 +25,10 @@ qt_add_executable(scanaddr WIN32 scanaddr.cc)
 target_link_libraries(
   scanaddr PRIVATE Qt6::Core Qt6::SerialPort Qt6::Network Qt6::Positioning
                   ${LIBUSB_1_LIBRARIES} ${YAMLCPP_LIBRARIES} libdmrconf)
+
+# Temporary, offline (never touches a radio) tool to validate D890UVCodeplug's encode path
+# against real ground-truth bytes. Not installed; not meant to be upstreamed as-is.
+qt_add_executable(testencode WIN32 testencode.cc)
+target_link_libraries(
+  testencode PRIVATE Qt6::Core Qt6::SerialPort Qt6::Network Qt6::Positioning
+                  ${LIBUSB_1_LIBRARIES} ${YAMLCPP_LIBRARIES} libdmrconf)

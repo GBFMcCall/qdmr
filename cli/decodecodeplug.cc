@@ -27,6 +27,7 @@
 #include "openuv380_codeplug.hh"
 #include "openrtx_codeplug.hh"
 #include "d868uv_codeplug.hh"
+#include "d890uv_codeplug.hh"
 #include "d878uv_codeplug.hh"
 #include "d878uv2_codeplug.hh"
 #include "d578uv_codeplug.hh"
@@ -143,6 +144,11 @@ decodeCodeplug(QCommandLineParser &parser, QCoreApplication &app) {
     } break;
   case RadioInfo::D868UVE:
     if (! decode<D868UVCodeplug, DummyFileReader>(config, filename, parser, err)) {
+      logError() << "Cannot decode codeplug '" << filename << "':\n" << err.format();
+      return -1;
+    } break;
+  case RadioInfo::D890UV:
+    if (! decode<D890UVCodeplug, DummyFileReader>(config, filename, parser, err)) {
       logError() << "Cannot decode codeplug '" << filename << "':\n" << err.format();
       return -1;
     } break;

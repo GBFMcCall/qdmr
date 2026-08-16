@@ -18,6 +18,7 @@
 #include "uv390_codeplug.hh"
 #include "md2017_codeplug.hh"
 #include "d868uv_codeplug.hh"
+#include "d890uv_codeplug.hh"
 #include "d878uv_codeplug.hh"
 #include "d878uv2_codeplug.hh"
 #include "d578uv_codeplug.hh"
@@ -158,6 +159,10 @@ int encodeCodeplug(QCommandLineParser &parser, QCoreApplication &app) {
     break;
   case RadioInfo::D868UVE:
     if (! encode<D868UVCodeplug>(config, flags, parser))
+      return -1;
+    break;
+  case RadioInfo::D890UV:
+    if (! encode<D890UVCodeplug>(config, flags, parser))
       return -1;
     break;
   case RadioInfo::D878UV:

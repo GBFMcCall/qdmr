@@ -2,6 +2,7 @@
 #include "config.hh"
 #include "logger.hh"
 #include <QtEndian>
+#include <cstring>
 
 
 /* ******************************************************************************************** *
@@ -86,6 +87,33 @@ D890UVCodeplug::allocateForDecoding() {
   this->allocateRadioIDs();
 }
 
+void
+D890UVCodeplug::allocateForEncoding() {
+  // Same addresses as allocateForDecoding() - see class documentation on the read-modify-write
+  // safety model this depends on.
+  this->allocateChannels();
+  this->allocateZones();
+  this->allocateRadioIDs();
+}
+
+void
+D890UVCodeplug::allocateUpdated() {
+  // See header: must allocate exactly the same (safe, verified) addresses as
+  // allocateForEncoding(), never the inherited D868UVE-specific settings blocks.
+  this->allocateForEncoding();
+}
+
+bool
+D890UVCodeplug::encodeElements(const Flags &flags, Context &ctx, const ErrorStack &err) {
+  if (! this->encodeRadioID(flags, ctx, err))
+    return false;
+  if (! this->encodeChannels(flags, ctx, err))
+    return false;
+  if (! this->encodeZones(flags, ctx, err))
+    return false;
+  return true;
+}
+
 uint32_t
 D890UVCodeplug::radioIdAddress(uint16_t i) {
   // Two independently-placed slots, not a confirmed array - see RadioIDElement documentation.
@@ -110,6 +138,18 @@ D890UVCodeplug::setRadioID(Context &ctx, const ErrorStack &err) {
     if (DMRRadioID *rid = id.toRadioID()) {
       ctx.config()->radioIDs()->add(rid); ctx.add(rid, i);
     }
+  }
+  return true;
+}
+
+bool
+D890UVCodeplug::encodeRadioID(const Flags &flags, Context &ctx, const ErrorStack &err) {
+  Q_UNUSED(flags); Q_UNUSED(err)
+  unsigned int n = ctx.count<DMRRadioID>();
+  if (n > Limit::numRadioIDs())
+    n = Limit::numRadioIDs();
+  for (unsigned int i=0; i<n; i++) {
+    RadioIDElement(data(radioIdAddress(i))).fromRadioID(ctx.get<DMRRadioID>(i));
   }
   return true;
 }
@@ -175,6 +215,20 @@ D890UVCodeplug::linkChannels(Context &ctx, const ErrorStack &err) {
   return true;
 }
 
+bool
+D890UVCodeplug::encodeChannels(const Flags &flags, Context &ctx, const ErrorStack &err) {
+  Q_UNUSED(flags); Q_UNUSED(err)
+  unsigned int n = ctx.count<Channel>();
+  if (n > Limit::numChannels())
+    n = Limit::numChannels();
+  for (unsigned int i=0; i<n; i++) {
+    ChannelElement ch(data(channelAddress(i)));
+    if (! ch.fromChannelObj(ctx.get<Channel>(i), ctx))
+      return false;
+  }
+  return true;
+}
+
 
 void
 D890UVCodeplug::allocateZones() {
@@ -196,6 +250,17 @@ D890UVCodeplug::zoneName(uint16_t i) {
   for (unsigned int j=0; (j<Offset::betweenZoneNames()/2) && (0 != ptr[j]); j++)
     name.append(QChar(qFromLittleEndian(ptr[j])));
   return name;
+}
+
+void
+D890UVCodeplug::setZoneName(uint16_t i, const QString &name) {
+  // The name field is only the first Limit::zoneNameLength() (16) UTF-16 chars (32 bytes) of the
+  // 0x40-byte slot - confirmed by round-trip validation: the remaining 32 bytes are unused
+  // (0xFF-filled on a real read) and must be left untouched, not zeroed.
+  uint16_t *ptr = (uint16_t *)data(Offset::zoneNames() + i*Offset::betweenZoneNames());
+  unsigned int maxlen = Limit::zoneNameLength();
+  for (unsigned int j=0; j<maxlen; j++)
+    ptr[j] = qToLittleEndian((uint16_t)((j < (unsigned int)name.length()) ? name.at(j).unicode() : 0));
 }
 
 bool
@@ -226,6 +291,25 @@ D890UVCodeplug::linkZones(Context &ctx, const ErrorStack &err) {
       if (! ctx.has<Channel>(cidx))
         continue;
       zone->A()->add(ctx.get<Channel>(cidx));
+    }
+  }
+  return true;
+}
+
+bool
+D890UVCodeplug::encodeZones(const Flags &flags, Context &ctx, const ErrorStack &err) {
+  Q_UNUSED(flags); Q_UNUSED(err)
+  unsigned int n = ctx.count<Zone>();
+  if (n > Limit::numZones())
+    n = Limit::numZones();
+  for (unsigned int i=0; i<n; i++) {
+    Zone *zone = ctx.get<Zone>(i);
+    setZoneName(i, zone->name());
+    uint16_t *channels = (uint16_t *)data(Offset::zoneChannels() + i*Offset::betweenZoneChannels());
+    memset(channels, 0xff, Size::zoneChannels());
+    unsigned int maxChannels = Size::zoneChannels()/2;
+    for (int j=0; (j<zone->A()->count()) && ((unsigned int)j<maxChannels); j++) {
+      channels[j] = qToLittleEndian((uint16_t)ctx.index(zone->A()->get(j)->as<Channel>()));
     }
   }
   return true;

@@ -7,6 +7,62 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
+## Update (2026-08-16, night) — encode-side validation: real findings, plus an unresolved bank-2 read-reliability issue
+
+**Built a proper round-trip validator** (`cli/testencode.cc`, offline, never touches the radio):
+loads a real raw dump (`dmrconf read foo.dfu`), decodes it, re-encodes the *same* `Config` back
+onto the *same already-loaded* image (not a blank one - `Codeplug::Flags` defaults to
+`updateCodeplug=true`, which is exactly the real device read-modify-write path), then diffs byte
+for byte against the original. This is a meaningfully different (and better) test than just
+running the file through `dmrconf encode` standalone, which starts from a blank image and would
+have hidden exactly the kind of "does this preserve what it doesn't touch" question that matters
+for write safety.
+
+**Results, for what's currently implemented:**
+- **Zone channel-lists: byte-perfect round-trip**, all 12.
+- **Both radio ID entries: byte-perfect round-trip.**
+- **Zone names: fixed a real bug found by this test** - the encoder was zeroing the second half of
+  each 64-byte slot (should stay untouched/`0xFF`, only the first 32 bytes are the actual name
+  field). Fixed in `setZoneName()`.
+- **Channels: real, specific gaps**, not a clean round-trip:
+  - Contact index (`+0x14`) and scan-list index (`+0x1b`) get reset on every encode - expected,
+    since we don't decode either yet, so `Config`'s `Channel` object has nothing there to restore.
+    This means **encoding a channel today would silently destroy its contact/scan-list
+    assignment** even if nothing about the channel was meant to change.
+  - The TX frequency/offset bytes (`+0x04`-`+0x06`) don't round-trip correctly for simplex
+    (non-repeater) channels specifically - looks like this radio may store something different
+    there for simplex than the D868UVE convention we inherited assumes. Not yet fixed.
+
+**Then, an unrelated and more serious problem surfaced while investigating bank 2's results
+specifically**: channel bank 2 (`0x010C0000`) - which decoded correctly earlier this session (all
+35 real channels, verified in the YAML output) - is now reading back as **completely blank**
+(`0xFF`) on every attempt. Confirmed this is real and specific to that address, not a general
+issue or a testing artifact:
+- Bank 1 and the zone-list table both read correctly, in the same sessions, right next to the
+  failed bank-2 reads.
+- Tried: direct single-address read, reading it as part of a continuous sweep from further back
+  (in case some kind of sequential "priming" mattered), multiple independent sessions with proper
+  settle time, and **a full radio power-cycle** - bank 2 stayed blank through all of it.
+- **The data itself is confirmed intact** - user checked the radio's own display directly (Bixby
+  and the renamed Test/Depew zone both still show correctly) and successfully transmitted on a
+  real channel. This is a read-side/protocol issue, not data loss, and definitely not something
+  caused by a write (double- and triple-checked: nothing in this session's encode-validation work
+  touches the device at all - `dmrconf encode` and `cli/testencode.cc` both operate purely on
+  local files and in-memory objects).
+
+**What this means going forward:** we don't currently understand what made bank 2 accessible
+earlier and inaccessible now. Until that's resolved, treat bank 2 read reliability as an open
+problem - QDMR's current decode will unpredictably show either the real 35 channels or a
+blank/garbage read for them, depending on some still-unknown condition. Two direct consequences:
+1. **No write support should be extended to bank 2** until this is understood - a real
+   read-modify-write cycle that silently gets a blank read back would write blank data over real
+   channels.
+2. Worth considering making the decode side detect an all-`0xFF` bank-2 read and handle it
+   gracefully (skip those channels / flag it) rather than silently presenting blank channels as if
+   they were real - not yet implemented.
+
+---
+
 ## Update (2026-08-16, night, MILESTONE 4) — radio ID list decoded
 
 User supplied their real DMR ID (3158993) to search for directly - and it turned out **already

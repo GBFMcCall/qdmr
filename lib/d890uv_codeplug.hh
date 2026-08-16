@@ -40,10 +40,18 @@
  *    preceded by 4 `u16` fields of unknown meaning) but is not yet wired into this class - see
  *    `maverick_qdmr_support.md`.
  *
- * @warning Do not attempt writes with this class. The encode/write path is entirely inherited,
- * unmodified, from D868UVCodeplug and targets the WRONG (D868UVE) addresses - using it to write
- * to a Maverick would corrupt the radio. This class is decode-path-only until the write side is
- * independently derived and verified. Read-only until further notice.
+ * @warning Encode (write) logic now exists for channels, zones (membership + names), and radio
+ * IDs - the same addresses as the decode side, so it should be self-consistent - but it has only
+ * been validated by an in-memory round-trip (decode a real read, re-encode it, diff against the
+ * original bytes at the addresses this class knows about; see `maverick_qdmr_support.md`), never
+ * by an actual write to the physical radio. `allocateForEncoding()`/`encodeElements()` touch only
+ * the specific addresses this class understands, in keeping with a read-modify-write model where
+ * everything else (contacts, scan lists, general settings, and anything else not yet mapped)
+ * simply never gets addressed and so can't be corrupted by an encode - growing this class's
+ * mapped area over time is meant to stay safe under that same principle. Still: **do not perform
+ * an actual write to the radio with this class without explicit, separate confirmation** - a
+ * round-trip byte match is strong evidence, not proof, and this hasn't been write-tested against
+ * real hardware.
  *
  * @ingroup anytone */
 class D890UVCodeplug : public D868UVCodeplug
@@ -126,9 +134,24 @@ protected:
   bool createElements(Context &ctx, const ErrorStack &err);
   bool linkElements(Context &ctx, const ErrorStack &err);
 
+  /** Encode-path counterpart of @c allocateForDecoding() - allocates the exact same addresses
+   *  (channels, zones, radio IDs). Deliberately does not touch anything else - see class
+   *  documentation on the read-modify-write safety model. */
+  void allocateForEncoding();
+  /** `AnytoneCodeplug::encode()` calls this instead of @c allocateForEncoding() when building a
+   *  codeplug from scratch (`!flags.updateCodeplug()`) - inherited D868UVCodeplug behavior
+   *  allocates a long list of D868UVE-specific settings blocks at the wrong addresses for this
+   *  radio. Overridden to do exactly what @c allocateForEncoding() does, so this class can't
+   *  accidentally touch unverified addresses no matter which entry point is used. */
+  void allocateUpdated();
+  /** Encode-path counterpart of @c createElements()/@c linkElements() combined. */
+  bool encodeElements(const Flags &flags, Context &ctx, const ErrorStack &err);
+
   /** Allocates the two known radio-ID-list slots (see @c RadioIDElement documentation). */
   void allocateRadioIDs();
   bool setRadioID(Context &ctx, const ErrorStack &err);
+  /** Encode-path counterpart of @c setRadioID(). */
+  bool encodeRadioID(const Flags &flags, Context &ctx, const ErrorStack &err);
   /** Returns the device address of the i-th (0 or 1) known radio ID slot. */
   static uint32_t radioIdAddress(uint16_t i);
 
@@ -137,6 +160,12 @@ protected:
   void allocateChannels();
   bool createChannels(Context &ctx, const ErrorStack &err);
   bool linkChannels(Context &ctx, const ErrorStack &err);
+  /** Encode-path counterpart of @c createChannels()/@c linkChannels(). Bounded to
+   *  @c Limit::numChannels() (163) - a config with more channels than that would mean creating a
+   *  channel beyond bank 2's currently-known real content, which needs a deliberate capacity
+   *  increase, not an automatic one; extra channels are silently not written rather than writing
+   *  to unverified addresses. */
+  bool encodeChannels(const Flags &flags, Context &ctx, const ErrorStack &err);
 
   /** Returns the device address of the i-th channel (0-based), accounting for the bank 1/bank 2
    *  split (see class documentation). */
@@ -147,9 +176,15 @@ protected:
   void allocateZones();
   bool createZones(Context &ctx, const ErrorStack &err);
   bool linkZones(Context &ctx, const ErrorStack &err);
+  /** Encode-path counterpart of @c createZones()/@c linkZones() combined - writes both the
+   *  channel-membership list and the zone name. Bounded to @c Limit::numZones() (12); a config
+   *  with more zones than that is not written, for the same reason as @c encodeChannels(). */
+  bool encodeZones(const Flags &flags, Context &ctx, const ErrorStack &err);
 
   /** Returns the real zone name read from the device, or an empty string if unset. */
   QString zoneName(uint16_t i);
+  /** Writes the zone name to the device. */
+  void setZoneName(uint16_t i, const QString &name);
 
 protected:
   /** Limits specific to what's actually been mapped on this radio so far. */
