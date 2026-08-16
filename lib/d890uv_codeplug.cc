@@ -25,6 +25,26 @@ D890UVCodeplug::ChannelElement::setName(const QString &name) {
 
 
 /* ******************************************************************************************** *
+ * Implementation of D890UVCodeplug::RadioIDElement
+ * ******************************************************************************************** */
+D890UVCodeplug::RadioIDElement::RadioIDElement(uint8_t *ptr)
+  : D868UVCodeplug::RadioIDElement(ptr)
+{
+  // pass...
+}
+
+QString
+D890UVCodeplug::RadioIDElement::name() const {
+  return readUnicode(Offset::name(), Limit::nameLength(), 0x0000);
+}
+
+void
+D890UVCodeplug::RadioIDElement::setName(const QString &name) {
+  writeUnicode(Offset::name(), name, Limit::nameLength(), 0x0000);
+}
+
+
+/* ******************************************************************************************** *
  * Implementation of D890UVCodeplug
  * ******************************************************************************************** */
 D890UVCodeplug::D890UVCodeplug(QObject *parent)
@@ -58,15 +78,46 @@ D890UVCodeplug::setBitmaps(Context &ctx) {
 void
 D890UVCodeplug::allocateForDecoding() {
   // Only allocate what has actually been independently verified on the live device. Deliberately
-  // does NOT call the inherited allocateContacts()/allocateRadioIDs()/allocateScanLists()/
-  // allocateGeneralSettings()/etc - those target D868UVE addresses that read back as blank or
-  // unrelated data on this radio (see maverick_qdmr_support.md).
+  // does NOT call the inherited allocateContacts()/allocateScanLists()/allocateGeneralSettings()/
+  // etc - those target D868UVE addresses that read back as blank or unrelated data on this radio
+  // (see maverick_qdmr_support.md).
   this->allocateChannels();
   this->allocateZones();
+  this->allocateRadioIDs();
+}
+
+uint32_t
+D890UVCodeplug::radioIdAddress(uint16_t i) {
+  // Two independently-placed slots, not a confirmed array - see RadioIDElement documentation.
+  static const uint32_t addr[2] = {0x03680000, 0x03684000};
+  return addr[i];
+}
+
+void
+D890UVCodeplug::allocateRadioIDs() {
+  for (uint16_t i=0; i<Limit::numRadioIDs(); i++) {
+    uint32_t addr = radioIdAddress(i);
+    if (! isAllocated(addr, 0))
+      image(0).addElement(addr, RadioIDElement::size());
+  }
+}
+
+bool
+D890UVCodeplug::setRadioID(Context &ctx, const ErrorStack &err) {
+  Q_UNUSED(err)
+  for (uint16_t i=0; i<Limit::numRadioIDs(); i++) {
+    RadioIDElement id(data(radioIdAddress(i)));
+    if (DMRRadioID *rid = id.toRadioID()) {
+      ctx.config()->radioIDs()->add(rid); ctx.add(rid, i);
+    }
+  }
+  return true;
 }
 
 bool
 D890UVCodeplug::createElements(Context &ctx, const ErrorStack &err) {
+  if (! this->setRadioID(ctx, err))
+    return false;
   if (! this->createChannels(ctx, err))
     return false;
   if (! this->createZones(ctx, err))

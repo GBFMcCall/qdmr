@@ -80,6 +80,38 @@ public:
     };
   };
 
+  /** Radio ID element for the BridgeCom Maverick.
+   *
+   * Found via a live test: user provided their real DMR ID (3158993); a read-only search for its
+   * BCD8-be encoding found it at exactly two addresses, `0x03680000` (name "Maverick", the radio's
+   * own name) and `0x03684000` (name "Grant", the user's own name) - matching the user's
+   * description of the same ID appearing once as the Master ID and once in the Radio ID List.
+   * Which of the two is semantically "master" vs. "list entry" isn't independently confirmed;
+   * both are exposed as radio ID list entries here since that's the only shape QDMR's `Config`
+   * model has for this data, and both round-trip through the *same* record format:
+   * `[u32 BCD8-be number][UTF-16LE name, NUL-terminated]`, i.e. `D868UVCodeplug::RadioIDElement`
+   * with the name field moved from `+0x05` to `+0x04` and switched from Latin1 to UTF-16LE -
+   * exactly the same kind of change as `ChannelElement` and the zone names above. */
+  class RadioIDElement: public D868UVCodeplug::RadioIDElement
+  {
+  public:
+    /** Constructor. */
+    explicit RadioIDElement(uint8_t *ptr);
+
+    /** Returns the name of the radio ID (UTF-16LE, unlike the D868UVE's Latin1). */
+    QString name() const;
+    /** Sets the name of the radio ID. */
+    void setName(const QString &name);
+
+  protected:
+    /** Internal used offsets within the radio ID element. */
+    struct Offset: public D868UVCodeplug::RadioIDElement::Offset {
+      /// @cond DO_NOT_DOCUMENT
+      static constexpr unsigned int name() { return 0x0004; }
+      /// @endcond
+    };
+  };
+
 public:
   /** Constructor. */
   explicit D890UVCodeplug(QObject *parent=nullptr);
@@ -93,6 +125,12 @@ protected:
   void allocateForDecoding();
   bool createElements(Context &ctx, const ErrorStack &err);
   bool linkElements(Context &ctx, const ErrorStack &err);
+
+  /** Allocates the two known radio-ID-list slots (see @c RadioIDElement documentation). */
+  void allocateRadioIDs();
+  bool setRadioID(Context &ctx, const ErrorStack &err);
+  /** Returns the device address of the i-th (0 or 1) known radio ID slot. */
+  static uint32_t radioIdAddress(uint16_t i);
 
   /** Allocates both channel banks (163 channels total, unconditionally - no live bitmap is used
    *  or trusted; see class documentation). */
@@ -123,6 +161,10 @@ protected:
     static constexpr unsigned int channelsInBank1() { return 128; }
     /** Fully confirmed against a real reference codeplug. */
     static constexpr unsigned int numZones() { return 12; }
+    /** Only two radio-ID-list slots are known (see @c RadioIDElement documentation) - the real
+     *  capacity of this table (if it's an array at all, rather than two independently-placed
+     *  settings fields) is not known. */
+    static constexpr unsigned int numRadioIDs() { return 2; }
   };
 
   /** Offsets specific to this radio's real, independently-verified memory map (see class

@@ -7,6 +7,34 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
+## Update (2026-08-16, night, MILESTONE 4) — radio ID list decoded
+
+User supplied their real DMR ID (3158993) to search for directly - and it turned out **already
+present in data collected during earlier scans**, no new radio reads needed to find it. Its
+BCD8-be encoding (`03 15 89 93`) had already been logged twice: at `0x03680000` (paired with the
+name "Maverick") and `0x03684000` (paired with the name "Grant") - exactly matching the user's
+description of the same ID appearing once as the Master ID and once in the Radio ID List.
+
+Added `D890UVCodeplug::RadioIDElement` (same idea as the channel/zone-name overrides: reuses
+`D868UVCodeplug::RadioIDElement`'s `number()` - BCD8-be at offset 0, unchanged - but moves the
+name field from `+0x05` to `+0x04` and switches it from Latin1 to UTF-16LE). Both known slots are
+read as radio-ID-list entries (whether one is semantically "the Master ID" and the other "a list
+entry" isn't independently confirmed, but both round-trip through the same record shape, and
+`Config`'s model only has one kind of radio-ID-list entry to put them in anyway).
+
+Verified against the live radio: `dmrconf read` now shows both entries correctly
+(`id1: Maverick/3158993`, `id2: Grant/3158993`) with no new errors introduced; channels' own
+`radioId` field still shows as unset/default, which is expected (none of them override the
+default ID).
+
+**Status now:** channels (163), zones (12, with real names), and radio IDs (2) all read
+correctly. Remaining for write-readiness: general settings (deferred - not required to create a
+channel), and independently verifying enough of the channel/zone *encode* path to write safely
+without disturbing anything unmapped (contacts, scan lists, general settings, etc.) - contacts
+explicitly deprioritized per user direction (tens of thousands of entries, not worth mapping now).
+
+---
+
 ## Update (2026-08-16, night) — next phase: working toward write-readiness
 
 User direction for this phase: skip contacts entirely for now (tens of thousands of entries in
