@@ -7,6 +7,35 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
+## Update (2026-08-16, night) — zone names: continued search, still not found
+
+Continued the search using the `0x200`-byte alignment convention established by every real table
+found so far (zone channel-lists, roaming channels, scan lists all start their records on `0x200`
+boundaries) - swept at exactly that stride so table starts can't be missed by phase, unlike the
+bank-2 near-miss earlier. Covered, in three batched (multi-range, single-session) sweeps:
+- `0x02180000`-`0x03600000` (the main gap between the known table cluster and the
+  Mounds/Maverick/Grant area)
+- `0x010C2000`-`0x02000000` (between the end of channel bank 2 and the zone-list table)
+- `0x03700000`-`0x04000000` (after the settings cluster)
+
+**No new zone names found** - only re-encountered already-known content (the canned SMS/greeting
+messages near `0x03140000`, `Sapulpa`/airband stuff near `0x03880000`, `North`/"Hotspot Setup"
+near `0x03a00000`). Also checked for single-byte ASCII encoding (in case zone names, unlike
+channel/scan-list names, use Latin1 instead of UTF-16LE) - none found either.
+
+**Where this leaves it:** the zone-name table isn't in any of the "obvious" gaps between what's
+already mapped, and doesn't follow the same array/stride convention as the channel-list or
+scan-list tables closely enough to have been caught by an alignment-matched sweep. It may be
+scattered as individually-placed fields (the way radio/owner name are, at `0x03680000`/`0x684000`,
+0x4000 apart with no discoverable stride) rather than stored as a clean array - which would make it
+much more expensive to find via blind sweeping. Continuing to search blindly means more radio
+reads with no guaranteed payoff; worth deciding with the user whether to keep going that way, try
+a different technique (e.g. a full dense capture of a much larger region, or comparing before/after
+a deliberate CPS-side edit to one zone name - if a Windows/Wine path is ever revisited), or move on
+to contacts/radio-ID/general-settings and leave zone names as `Zone N` placeholders for now.
+
+---
+
 ## Update (2026-08-16, night) — found the scan-list table (not zone names - corrected by user)
 
 While hunting for zone names, found a real, distinct table at `0x02100000` (`0x200`-byte stride,
