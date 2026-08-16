@@ -7,6 +7,44 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
+## Update (2026-08-16, afternoon, MILESTONE 8) — general settings block found via live edit
+
+The user changed the Power-On Display line 1 from `"WELCOME"` to `"GOAWAY"` via the Windows CPS
+and wrote it to the radio - a deliberately distinctive string, easy to grep for with no false-
+positive risk. A dense (stride 0x10, fully gapless) read-only sweep of the large unexplored gap
+`0x02900000-0x03600000` (~7MB, ~5.5 minutes) found it immediately:
+
+- `0x034c0900`: intro line 1, UTF-16LE, now reads `"GOAWAY"` (was `"WELCOME"`).
+- `0x034c0920`: intro line 2, UTF-16LE, `"KC1KCE"` - confirms this is the right block.
+- `0x034c0940`: ASCII `"12345678"` - almost certainly a default boot/programming password (8-digit
+  PIN), immediately after the two intro lines. Not yet confirmed against a real setting.
+
+**Also found the same mirroring pattern as zone names/radio IDs**: identical content exists again
+at `0x03500900`, exactly `0x40000` bytes higher - same offset as before. Still not chased down, but
+now confirmed as a general pattern across at least three different table types, not a one-off.
+
+**This also locates the general settings struct itself.** Dumping `0x034c0000-0x034c0900` (the
+~2.25KB immediately before the boot text) shows a dense block of small enum/flag/bitmap fields -
+clearly `GeneralSettingsElement`'s real home on this radio, `0x034c0000`, nothing like D868UVE's
+`0x02500000`. Two visually distinct sub-regions inside it:
+- `0x034c0000-0x034c0160`: varied single/multi-byte fields - likely the bulk of the actual
+  settings (display, audio, key config, etc).
+- `0x034c0400-0x034c0600`: a long repeating `01 00` array (256+ entries) - shape suggests an
+  index/lookup table (e.g. per-channel or per-key mapping) rather than settings values
+  themselves.
+
+Not yet pinned down: the exact byte for TOT. AnyTone's newer radios (D878UV et al.) encode a
+global default TX timeout as `seconds / 30` in a single byte (120s → `0x04`) - D868UVE's
+`GeneralSettingsElement` doesn't expose this field at all, so there's no direct precedent to
+crib the offset from. There's a plausible `0x04` at `0x034c0004`, but that's a guess among many
+candidate bytes in this block, not a confirmed find.
+
+**Next step, already in progress:** the user is changing TOT to a different value and writing it,
+which will be diffed directly against this same freshly-captured `0x02900000-0x03600000` region -
+no new baseline read needed, just a second pass and a byte diff.
+
+---
+
 ## Update (2026-08-16, afternoon) — general settings / boot text: not found yet, blocked
 
 Went looking for general settings using two known anchor values the user provided: the Power-On
