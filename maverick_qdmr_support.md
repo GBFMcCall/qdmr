@@ -7,6 +7,28 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
+## Where things stand as of 2026-08-16, ~15:30 - next task when this picks back up
+
+Session paused here (end of a Sunday afternoon working session) with general/property settings
+deliberately set aside - see MILESTONE 8-10 below for what *is* confirmed there (TOT, boot text)
+and why going further field-by-field isn't a good use of time (40+ unidentified fields, one live
+test each). Setting that aside, **in priority order, the next task is:**
+
+1. **Close the ping-pong gap on the encode side before any real device write is attempted.**
+   `encodeRadioID()`/`setZoneName()` still target the hardcoded primary address unconditionally
+   (see MILESTONE 9/10) - fine for the offline round-trip validator, but a real write could land in
+   whichever copy the radio currently considers stale. Needs a decision (write both copies? detect
+   and target the free one?) before it's safe to test on hardware. Channel edits alone aren't
+   affected - channel banks are confirmed *not* to be a mirror pair.
+2. **An actual write test on real hardware**, once #1 is resolved - the original benchmark: create
+   one new channel in QDMR, write it to the radio, narrow and reversible. Requires fresh, explicit
+   authorization at that time, same as every write decision so far - nothing here has changed that.
+3. **Lower priority, real gaps but not blockers:** scan-list channel membership (names only so far -
+   the 14-byte record header before the name is still not understood) and group lists (not
+   investigated at all). Both matter for a fully-usable DMR radio eventually, neither blocks #2.
+
+---
+
 ## Update (2026-08-16, afternoon, MILESTONE 10) — read-side resilience fix for ping-pong storage
 
 Implemented `D890UVCodeplug::resolveMirroredAddress()`: given a table's primary (lower) address,
