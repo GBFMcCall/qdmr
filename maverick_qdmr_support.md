@@ -7,6 +7,53 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
+## Update (2026-08-16, afternoon, MILESTONE 9) — MAJOR: the radio uses ping-pong/wear-leveled dual-copy storage, and this likely explains the bank-2 scare
+
+The user changed TOT from 120s to 180s and wrote it, as a second live-edit test. Diffing a fresh
+read-only capture against the exact same `0x02900000-0x03600000` region captured for the GOAWAY
+test found the byte cleanly: **`GeneralSettingsElement` offset `+0x04`, one byte, value = seconds
+÷ 30** (`120/30=4` → `180/30=6`) - identical encoding convention to D878UV's `transmitTimeout()`,
+just at a different base address on this radio. This is a real, confirmed field now.
+
+**But the diff also showed something much bigger.** The *entire* settings block at its previously-
+confirmed address, `0x034c0000-0x034c0950` (all of it - the settings bytes, the `01 00` array, and
+the `"GOAWAY"`/`"KC1KCE"`/`"12345678"` boot text) is now **completely erased (`0xFF`)**. Nothing
+malformed, nothing partially written - just gone, as if that address was never used.
+
+The updated content - TOT byte included - showed up instead at the **mirror address exactly
+`0x40000` higher, `0x03500000`**, which last update we'd only noted as "identical content, unknown
+significance." It's now clear what's going on: **this radio stores at least the general settings
+block as two ping-ponged copies, and every write flips which one is live** - erase the old copy,
+write the new data to the other one. `0x034c0000` was live before this write; `0x03500000` is live
+now. Confirmed by byte-for-byte inspection of both addresses in both captures - not a guess.
+
+**This almost certainly explains the earlier "bank 2 randomly reads blank" scare** (see the
+MILESTONE-adjacent update further down, still marked root-cause-unknown at the time). That
+investigation never found anything QDMR-side that could cause it, and it resolved itself after the
+user's own full CPS write - exactly what you'd expect if channel bank 2 uses the *same* ping-pong
+mechanism: a write can leave whichever copy our hardcoded address points at sitting erased, with
+the real data now one flip-address away. This isn't proven for the channel banks specifically yet,
+but the mechanism now has a real, confirmed instance elsewhere on this same radio, which makes it
+the leading explanation rather than an open mystery.
+
+**Practical impact - this affects the read path today, not just future writes:**
+- `radioIdAddress()`, `Offset::zoneNames()`, and any settings address we add all currently hardcode
+  *one* of the two copies. After any write from the CPS (including totally unrelated ones, since we
+  don't know the flip granularity - per-table? per-sector? radio-wide?), that hardcoded address
+  can go stale/blank without warning, on a read that used to work fine.
+- **Recommended next step:** make reads resilient - check both `addr` and `addr ^ 0x40000` (or
+  `addr` and `addr + 0x40000` depending on which one is canonical) at decode time, and use
+  whichever one isn't erased. This is a real reliability fix, not a nice-to-have, and it's cheap to
+  implement now that the pattern is understood. Not yet implemented - flagging for the next unit of
+  work.
+- For any future *encode*/write support, this raises the stakes further: writing to the address our
+  code currently hardcodes could silently write to the copy the radio considers stale, with no
+  effect (or worse, an inconsistent state) if the radio's own firmware expects writes to follow its
+  ping-pong convention rather than a fixed address. Another reason actual writing needs its own
+  dedicated investigation before it's attempted, well beyond what's needed for reads.
+
+---
+
 ## Update (2026-08-16, afternoon, MILESTONE 8) — general settings block found via live edit
 
 The user changed the Power-On Display line 1 from `"WELCOME"` to `"GOAWAY"` via the Windows CPS
