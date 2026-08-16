@@ -28,10 +28,17 @@
  *    field-by-field the way frequency/name are.
  *  - All 12 zones: channel-membership lists at `0x02000000 + zone_index * 0x200`, fully verified
  *    against a real reference codeplug (exact match, all 12, including edge cases). Zone *names*
- *    were not found anywhere on the live device and are synthesized as "Zone N" here.
- *  - Contacts, radio IDs, scan lists, group lists, general settings (DMR ID, callsign, etc.):
- *    NOT located. Deliberately left empty rather than decoded from the (wrong, D868UVE-inherited)
- *    addresses, which would produce garbage.
+ *    are a completely separate table at `0x03600000 + zone_index * 0x40` (NUL-terminated
+ *    UTF-16LE at offset 0 of each 64-byte slot) - found via a live before/after test (user
+ *    renamed zone 10 from "Depew" to "Test" via the Windows CPS and wrote it to the radio; a
+ *    read-only search for the new string found it at exactly the predicted address). Definitively
+ *    confirmed, not inferred.
+ *  - Contacts, radio IDs, general settings (DMR ID, callsign, etc.): NOT located. Deliberately
+ *    left empty rather than decoded from the (wrong, D868UVE-inherited) addresses, which would
+ *    produce garbage.
+ *  - Scan lists: a real table was found at `0x02100000 + list_index * 0x200` (name at `+0x0E`,
+ *    preceded by 4 `u16` fields of unknown meaning) but is not yet wired into this class - see
+ *    `maverick_qdmr_support.md`.
  *
  * @warning Do not attempt writes with this class. The encode/write path is entirely inherited,
  * unmodified, from D868UVCodeplug and targets the WRONG (D868UVE) addresses - using it to write
@@ -97,10 +104,14 @@ protected:
    *  split (see class documentation). */
   static uint32_t channelAddress(uint16_t i);
 
-  /** Allocates all 12 zones' channel-membership lists (fixed count, no live bitmap). */
+  /** Allocates all 12 zones' channel-membership lists and name fields (fixed count, no live
+   *  bitmap). */
   void allocateZones();
   bool createZones(Context &ctx, const ErrorStack &err);
   bool linkZones(Context &ctx, const ErrorStack &err);
+
+  /** Returns the real zone name read from the device, or an empty string if unset. */
+  QString zoneName(uint16_t i);
 
 protected:
   /** Limits specific to what's actually been mapped on this radio so far. */
@@ -122,6 +133,8 @@ protected:
     static constexpr unsigned int channelBank2() { return 0x010C0000; }
     static constexpr unsigned int zoneChannels() { return 0x02000000; }
     // betweenZoneChannels() (0x200) matches the inherited D868UVE default - no override needed.
+    static constexpr unsigned int zoneNames() { return 0x03600000; }
+    static constexpr unsigned int betweenZoneNames() { return 0x0040; }
     /// @endcond
   };
 };

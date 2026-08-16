@@ -7,6 +7,38 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
+## Update (2026-08-16, night, MILESTONE 3) — zone names found via a live before/after test; complete
+
+Blind sweeping (previous entry) never found the zone-name table because it doesn't follow the
+`0x200`-byte record convention every other table here uses. Found it instead by direct experiment:
+**user renamed zone 10 from "Depew" to "Test" via the Windows CPS and wrote it to the physical
+radio**, then a read-only search on this side for the new string `Test` (UTF-16LE) found it
+immediately at `0x03600280`.
+
+Combined with the two names already known from that address neighborhood (`Mounds` at
+`0x03600000`, `Claremore` at `0x03600200`), the real stride became obvious:
+`0x03600200 - 0x03600000 = 0x200`, matching zone-index delta 8 (`Mounds`=0, `Claremore`=8) →
+`0x200 / 8 = 0x40`. **Zone names live at `0x03600000 + zone_index * 0x40`**, NUL-terminated
+UTF-16LE starting at offset 0 of each 64-byte slot. This also retroactively explains the earlier
+"only 2 of 12 found" result: a `0x200`-stride sweep of this table only ever lands on every 8th
+real slot (`0x200` happens to be an exact multiple of the real `0x40` stride) - not a partial
+table, a fully aliased sampling artifact.
+
+Read all 12 slots directly and confirmed every name, in order: `Mounds`, `Analog`, `Tulsa So`,
+`PI`, `Tulsa C`, `BikeRide`, `Preston`, `Mannford`, `Claremore`, `Bixby`, `Test` (was `Depew` -
+the user's deliberate test edit, not yet reverted on the radio), `Traveling`.
+
+**`D890UVCodeplug` updated**: `Offset::zoneNames()`/`betweenZoneNames()` added, `createZones()` now
+reads the real name via a small inline UTF-16LE decode (`zoneName(i)`), falling back to the old
+`Zone N` placeholder only if a slot is empty. Verified against the live radio - `dmrconf read`
+produces all 12 zones with their real names and full, correct channel membership.
+
+**Status now: all 163 channels and all 12 zones (names + membership) read correctly from the live
+radio.** Remaining gaps: contacts, radio ID(s), general settings, and the scan-list table found
+along the way (documented above, not yet wired into the codeplug class).
+
+---
+
 ## Update (2026-08-16, night) — zone names: continued search, still not found
 
 Continued the search using the `0x200`-byte alignment convention established by every real table

@@ -131,16 +131,30 @@ D890UVCodeplug::allocateZones() {
     uint32_t addr = Offset::zoneChannels() + i*Offset::betweenZoneChannels();
     if (! isAllocated(addr, 0))
       image(0).addElement(addr, Size::zoneChannels());
+    uint32_t nameAddr = Offset::zoneNames() + i*Offset::betweenZoneNames();
+    if (! isAllocated(nameAddr, 0))
+      image(0).addElement(nameAddr, Offset::betweenZoneNames());
   }
+}
+
+QString
+D890UVCodeplug::zoneName(uint16_t i) {
+  // NUL-terminated UTF-16LE at offset 0 of each 0x40-byte slot - see class documentation.
+  uint16_t *ptr = (uint16_t *)data(Offset::zoneNames() + i*Offset::betweenZoneNames());
+  QString name;
+  for (unsigned int j=0; (j<Offset::betweenZoneNames()/2) && (0 != ptr[j]); j++)
+    name.append(QChar(qFromLittleEndian(ptr[j])));
+  return name;
 }
 
 bool
 D890UVCodeplug::createZones(Context &ctx, const ErrorStack &err) {
   Q_UNUSED(err)
-  // Real zone names have not been located on the live device (see class documentation) -
-  // synthesize placeholder names rather than guessing or reading garbage.
   for (uint16_t i=0; i<Limit::numZones(); i++) {
-    Zone *zone = new Zone(QString("Zone %1").arg(i+1));
+    QString name = zoneName(i);
+    if (name.isEmpty())
+      name = QString("Zone %1").arg(i+1);
+    Zone *zone = new Zone(name);
     ctx.config()->zones()->add(zone); ctx.add(zone, i);
   }
   return true;
