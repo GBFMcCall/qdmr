@@ -18,3 +18,10 @@ target_link_libraries(
                   ${LIBUSB_1_LIBRARIES} ${YAMLCPP_LIBRARIES} libdmrconf)
 
 install(TARGETS dmrconf DESTINATION ${CMAKE_INSTALL_FULL_BINDIR})
+
+# Temporary, read-only diagnostic tool for the Maverick memory-map investigation.
+# Not installed; not meant to be upstreamed as-is.
+qt_add_executable(scanaddr WIN32 scanaddr.cc)
+target_link_libraries(
+  scanaddr PRIVATE Qt6::Core Qt6::SerialPort Qt6::Network Qt6::Positioning
+                  ${LIBUSB_1_LIBRARIES} ${YAMLCPP_LIBRARIES} libdmrconf)

@@ -7,10 +7,133 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
-## Current Status (as of 2026-08-16)
+## Update (2026-08-16, evening) — BREAKTHROUGH: found the real channel table, read-only
+
+The user confirmed the radio's codeplug is real and fully functional (tested zone/channel
+switching, DMR TX to a local repeater/echo, and analog TX) — so the "is the codeplug actually
+there" question from earlier today is settled: **it's there, QDMR is just reading the wrong
+addresses/layout.** That reframed this from "is there a codeplug" to "map the real memory layout."
+
+Built a small **read-only** diagnostic tool, `cli/scanaddr.cc` (temporary, not installed, not
+upstream-worthy as-is — added a `scanaddr` target to `cli/CMakeLists.txt` alongside `dmrconf`, same
+build flags). It talks to the radio using the exact same `AnytoneInterface::read()` primitive
+`dmrconf` already uses (same `PROGRAM`/`R addr 16`/`END` protocol, verified byte-identical and
+reproducible) but isn't restricted to the address list `D868UVCodeplug` knows about — it can sample
+or dump any address, and flags reads that decode as a plausible BCD channel frequency or contain a
+long run of printable ASCII, so the wide sweeps don't have to be reviewed byte-by-byte. It never
+calls `write()`.
+
+**What the sweeps found:**
+
+- **0x00000000–0x00800000 (8MB):** dense, real, non-blank data throughout, but it's firmware
+  resource data (font/glyph bitmaps, lookup tables) — not codeplug-shaped. This is *not* where
+  channels/zones live.
+- **~0x01000000–0x0c000000+:** large stretches of real Unicode (UTF-16LE) text — names, callsigns,
+  and country/province names ("Georges", "I4OTX", "Germany", "Guangdong", "Fujian", etc.). This
+  is almost certainly AnyTone's built-in worldwide DMR contact/ID database, not the user's own
+  codeplug — but it proves real structured data exists far outside the address range
+  `D868UVCodeplug` reads, and that it's UTF-16LE, not the Latin1 QDMR's D868UVE map assumes.
+- **0x00FC0000: the real channel table.** A fine (`--stride 80`) sweep found 128 back-to-back,
+  clearly real channel records, each 128 bytes (`0x80`) — not the 64 bytes (`0x40`) D868UVE uses —
+  running from `0x00FC0000` to `0x00FC3FFF` and then going blank immediately after (`0x00FC4000`
+  onward is empty, confirmed by fine sweep). Within each record:
+  - Bytes `0x00–0x03`: RX frequency, **same BCD8-be encoding as D868UVE** (`rxFrequency()`) —
+    decoded real, plausible 2m/70cm ham frequencies throughout (146.520, 446.000, 144.390,
+    442.475, 449.000, 444.350 MHz, etc.), not garbage.
+  - Bytes `0x04–0x07`: looks like TX offset, same BCD8-be encoding (decoded a clean 5.000 MHz on
+    several records — standard 70cm repeater offset).
+  - **Name field at relative offset `0x44`** (not `0x23` like D868UVE), **UTF-16LE** (2 bytes/char,
+    not single-byte Latin1) — decoded clean, real channel names: `RAB OK`, `RAB OKWtr`, `RAB OKE`,
+    `RAB OKTAC`, `RAB OKTlk`, `RAB OK DMR`, `RAB Echo`, `RAB NA`, `RAB Dscnt`, `RAB DMR`,
+    `RAB Emcom`, `RAB Ares`, `RAB RedAm`, `RAB Tac1`, `RAB Tac2`, `RAB Tac3`. **These read exactly
+    like real user-created repeater/talkgroup channel names** (Emcom, ARES, tactical channels,
+    DMR/analog variants of the same repeater) — @user, do these ring a bell / match your actual
+    channel list? That would confirm definitively we've found the real table.
+  - 128 records × 128 bytes = 0x4000 bytes = exactly `Limit::channelsPerBank() = 128` from the
+    existing D868UVE map — the *count* QDMR already assumes per bank is right, only the *record
+    size* and *base address* are wrong.
+- **Address aliasing found:** `0x00FC0000` and `0x01000000` (exactly `+0x00040000`, the same
+  delta as D868UVE's `betweenChannelBanks()`) return **byte-for-byte identical** content — not a
+  second bank, an alias/mirror of the first. The same `+0x00040000` delta was independently seen
+  earlier today between the small `zoneNames()`/`radioIDs()` records (`0x02540000` /
+  `0x02580000`), which also turned out to be identical. This looks like a consistent address-line
+  quirk (something bit-18-ish is being folded/ignored) in how this radio's memory decodes reads at
+  this protocol level — worth understanding, but not yet fully mapped.
+- **Not yet found:** the other ~35 channels (163 total − 128 in this bank), the 12 zones, and the
+  contact/radio-ID tables specific to the user's codeplug (as opposed to the built-in worldwide
+  database found above). `0x00FC4000` onward (where a second bank would naturally follow) is
+  confirmed blank, and the naive "next bank" address (`+0x40000`) is the alias, not real new data,
+  so the second bank is somewhere else not yet located.
+
+**Net effect:** the original "field-width/stride mismatch" theory was right in spirit, but the
+actual mismatch is much larger than a small offset tweak: real base address `0x00FC0000` (not
+`0x00800000`), record size `0x80` (not `0x40`), name field at `+0x44` (not `+0x23`), and **UTF-16LE
+encoding** (not Latin1) — a genuinely different generation of the AnyTone codeplug layout, not a
+simple BridgeCom relabeling of the D868UVE map. All of this was found read-only, using the same
+verified-safe read primitive already in `lib/anytone_interface.cc`.
+
+---
+
+## Update (2026-08-16, later same day) — raw-byte investigation, read-only
+
+Did a fresh **read-only** investigation directly against the physical radio: two independent
+`dmrconf read raw.bin` (binary/DfuSe format) dumps, taken minutes apart, came back **byte-for-byte
+identical** — so what follows is the radio's genuine, stable, repeatable state, not a USB
+transport glitch. (`.bin`/`.dfu` output skips QDMR's decoder entirely and just dumps the raw
+per-address memory elements the download step fetched — see `cli/readcodeplug.cc`.) Dumps saved
+under `maverick_raw_dumps/` (gitignored, not committed).
+
+Parsed the DfuSe container in Python (element = address + raw bytes, straight from the device) and
+checked it against the exact addresses `lib/d868uv_codeplug.hh`/`.cc` uses for the D868UVE map:
+
+- **All "in use" bitmaps are 100% `0xFF`** — `channelBitmap` (`0x024c1500`), `zoneBitmap`
+  (`0x024c1300`), `contactBitmap` (`0x02640000`), `radioIDBitmap`, `scanListBitmap`,
+  `groupListBitmap` are every single bit set. Since `BitmapElement::isEncoded()` treats bit=1 as
+  "in use", and `allocateChannels()`/`createChannels()`/etc. in `d868uv_codeplug.cc` trust these
+  bitmaps completely, this **directly explains the wildly-inflated zone/channel counts** — QDMR is
+  correctly doing what an all-1s bitmap tells it to do (decode all 4000 channel slots / 250 zone
+  slots as populated).
+- **The channel-bank region itself is essentially blank.** Scanned all 4000 channel slots at
+  `Offset::channelBanks() = 0x00800000` (64 bytes/slot) for a valid BCD-encoded, VHF/UHF-plausible
+  RX frequency: **zero** found in banks 0–30 (slots 0–3967). The last 32 slots (bank 31) all show
+  one identical placeholder frequency (444.85000 MHz) with null-byte names — reads like a
+  factory/CPS default-fill template, not real user channels.
+- **Whole-image scan for any sign of the real codeplug came back empty.** Searched the full ~513KB
+  dump for (a) any BCD-decodable VHF/UHF frequency sitting next to a readable name string at the
+  expected relative offset, and (b) any human-readable ASCII run ≥4 chars anywhere at all. Found
+  nothing — the only ASCII-looking runs are fixed-byte fill patterns (`0x55` repeated = "U", a
+  repeating 4-byte non-text pattern), not real channel/zone/contact names.
+- **Byte-value histogram of the whole dump: 95.8% is `0xFF` (erased-flash marker), 3.3% is `0x00`.**
+  Only a handful of small regions have any other content.
+- The only genuinely non-blank data found anywhere: 2–3 tiny 32-byte records at
+  `Offset::zoneNames() = 0x02540000` and, **byte-for-byte identically**, at
+  `Offset::radioIDs() = 0x02580000`. Each contains what looks like an embedded timestamp
+  (`ea 07` → `0x07ea` = 2026, followed by month/day/hour/minute-ish bytes reading roughly
+  "2026-06-14 07:37/38") but no readable zone or radio-ID name text. Every other record in both
+  tables (index 3 onward — i.e. essentially the whole table) is `0xFF`.
+
+**This changes the diagnosis.** The original "field-width/stride mismatch" theory predicts real
+data sitting at *shifted* offsets — but a systematic scan of the entire dump turns up no readable
+names and no plausible frequencies anywhere outside of one CPS-looking placeholder. The regions
+QDMR's D868UVE mapping reads for channels, zones, contacts, and radio IDs are **almost entirely
+erased flash on this radio, right now** — not misaligned real data. The two identical-content
+"header" records at otherwise-unrelated table addresses (zone names vs. radio IDs) are themselves
+odd — possibly address aliasing in the D890UV's memory map, or a shared init-record template CPS
+stamps into multiple tables on codeplug creation.
+
+**Open question this raises: is the known-good 12-zone/163-channel codeplug actually on this
+physical radio right now?** Two independent read-only sessions agreeing byte-for-byte rules out a
+flaky read, but doesn't rule out the radio having been reset, reflashed, or simply being a
+different state than assumed since the last confirmed Windows CPS write. This needs to be settled
+before spending more time on memory-map archaeology — see Next Steps.
+
+---
+
+## Current Status (as of 2026-08-16, morning)
 
 **USB detection and the raw radio-read protocol work correctly. The codeplug *decode* on top of
-that read is wrong and is the active bug to fix next.**
+that read is wrong and is the active bug to fix next.** *(See the Update above — the picture is
+more complicated than this section originally assumed; keeping this section as-is for history.)*
 
 | Layer | Status |
 |---|---|
@@ -143,19 +266,36 @@ decode from "hard crash" to "completes but wrong" — it's necessary but not suf
 
 ## Next Steps
 
-1. **Fix the codeplug decode** (Current Status above) — wrong channel/zone name offsets and wrong
-   in-use counts, most likely a memory-map/offset/stride mismatch between real AnyTone D868UVE and
-   BridgeCom's D890UV. Suggested approach: get a byte-level reference (Windows CPS binary export or
-   raw `dmrconf read` dump) and diff field-by-field against the `D868UVE` codeplug class
-   (`lib/d868uv_codeplug.cc`) to find where the layout actually diverges. **This is the task
-   starting next.**
-2. **Writing to the radio** — do not attempt until #1 is verified correct (ideally by round-tripping:
-   read, write back unchanged, read again, and confirm the real 12/163 zones/channels survive
-   intact).
-3. **Consider upstreaming**, once correct. Both the `defaultChannel()` fix and Maverick VID/PID +
-   identifier support are generally useful, narrowly-scoped changes that would likely be welcome
-   as a PR to `hmatuschek/qdmr` — BridgeCom is a real commercial reseller of this AnyTone variant,
-   and the bug fix has zero downside for existing supported radios.
+*(Superseded: the "is the codeplug even on the radio" question below and the old step 0 are
+resolved — user confirmed via live TX test the codeplug is real and working. See the evening
+Update above for where things stand instead.)*
+
+1. **Finish mapping the real memory layout**, using `cli/scanaddr.cc` (read-only, safe):
+   - Find the second channel bank (remaining ~35 of 163 channels) — not at the naive `+0x40000`
+     (that's an alias of bank 0, confirmed identical bytes), and not immediately following bank 0
+     in memory (`0x00FC4000`+ confirmed blank). Needs a wider sweep.
+   - Find the 12-zone table (zone name + member-channel-index list) and the real contact/radio-ID
+     tables for the user's own codeplug, as distinct from the built-in worldwide DMR database
+     found around `0x01000000+`.
+   - Decode the rest of the 128-byte channel record (mode, power, color code, timeslot, contact
+     index, etc.) by comparing against known real settings for a couple of the named channels
+     found so far (e.g. ask the user what mode/power/color-code `RAB DMR` or `RAB OK` actually use,
+     and match against the raw bytes at that record's offset).
+   - Worth understanding the `+0x00040000` address-aliasing quirk found in two independent places
+     (channel bank mirror, `zoneNames()`/`radioIDs()` mirror) — may matter for the final address
+     map, may just be an artifact of how this firmware decodes reads.
+2. **Write a new codeplug class** (e.g. `D890UVCodeplug`, distinct from `D868UVCodeplug` rather
+   than mapped onto it) once the layout above is fully characterized, since the differences
+   (record size, field offsets, UTF-16LE names) are too large for a same-class offset tweak.
+3. **Writing to the radio** — still not attempted, still blocked until the new codeplug class
+   round-trips correctly (read, write back unchanged, read again, confirm the real 12/163
+   zones/channels survive intact).
+4. **Consider upstreaming**, once correct. The `defaultChannel()` fix and Maverick VID/PID +
+   identifier support are already generally useful, narrowly-scoped changes independent of the
+   layout work above and would likely be welcome as a PR to `hmatuschek/qdmr` on their own —
+   BridgeCom is a real commercial reseller of this AnyTone variant, and the bug fix has zero
+   downside for existing supported radios. The full `D890UVCodeplug` would be a second, separate
+   PR once done.
 
 ---
 
