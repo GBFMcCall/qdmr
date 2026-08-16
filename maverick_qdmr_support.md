@@ -7,6 +7,40 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
+## Update (2026-08-16, night) — found the scan-list table (not zone names - corrected by user)
+
+While hunting for zone names, found a real, distinct table at `0x02100000` (`0x200`-byte stride,
+mirrored at `0x02140000` per the usual aliasing pattern) holding 7 named records: `Analog`, `Pi`,
+`RAB`, `Tulsa So`, `Tulsa Cntr`, `Claremore`, `Bixby`. Initially misread this as a partial/uncertain
+zone-name table, since 6 of the 7 strings match real zone names. **User corrected this: these are
+the radio's 7 Scan Lists, not zones** - `RAB` in particular is not one of the 12 zones, which is
+what first flagged something was off. Worth capturing properly since scan lists are a real DMR
+codeplug feature QDMR should eventually support for this radio too, independent of the zone-name
+question:
+
+- Record format (confirmed structure, semantics of the 4 leading `u16` values not yet decoded):
+  ```
+  [u16][u16=0xffff][u16=0xffff][u16][u16][u16][u16][name, UTF-16LE, NUL-terminated @ +0x0E]
+  ```
+- 6 of 7 records share an identical 4-value prefix (`20,30,31,31`) with only `Analog`'s differing
+  (`15,25,29,29`) - looks like default/boilerplate values from list creation, not meaningfully
+  distinct per-list data; needs more investigation to decode (likely priority-channel or
+  channel-count/range fields, analogous to `D868UVCodeplug`'s `ScanListElement`).
+- Table capacity is presumably larger than 7 (D868UVE allows up to 250 scan lists) - only checked
+  indices 0-6 (`0x02100000`-`0x02100c00`); didn't verify where the real capacity/bitmap-equivalent
+  ends.
+- A second, structurally different table at `0x03600000` (name at `+0x00` directly, no prefix
+  fields) holds exactly 2 entries: `Mounds` and `Claremore`. `Claremore` is explained (it's also a
+  real scan-list name, plausibly naming both a zone and its corresponding scan list after the same
+  site). `Mounds` is *not* one of the 7 scan lists, so this table's purpose is still unclear -
+  possibly Roaming Zones (a separate AnyTone feature from Roaming Channels, found earlier at
+  `0x02080000`) or something else entirely. Not yet resolved either way.
+
+**Zone names are still not found.** Corrected the search plan to stop treating either table above
+as a candidate. See below for where the search goes next.
+
+---
+
 ## Update (2026-08-16, night, MILESTONE 2) — bank 2 found: all 163 channels, all 12 zones complete
 
 User confirmed the GUI read (fresh relaunch, direct Read, no errors) matches the CLI output
