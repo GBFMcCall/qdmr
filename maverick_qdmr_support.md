@@ -7,6 +7,50 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
+## Update (2026-08-16, night, MILESTONE 5) — new-channel test resolves the bank-2 question decisively
+
+User's suggestion, in response to the bank-2 read-reliability scare: rather than keep guessing at
+*why* reads were failing, add a genuinely new channel via the Windows CPS and write it to the
+radio - both a real independent test of the whole bank-1/bank-2 model, and a natural way to force
+a rewrite of that memory region. User created a channel and added it to the Traveling zone.
+
+**Read-only check afterward, and every single prediction held:**
+- **Bank 2 is fully readable again** - record 0 decodes as `Bix OKE` (verified the *name* field
+  specifically this time, not just frequency, since Bixby's repeater frequency coincidentally
+  matches bank 1's first record - false-alarm-proofed this one).
+- **The new channel landed exactly where the model predicted**: `0x010C1180`, immediately after
+  the previous last real record (`0x010C1100`) - i.e. bank 2 extended by simple sequential fill,
+  exactly as documented, with no bitmap or other indexing surprise.
+- **The Traveling zone's channel-index list grew from `[161, 162]` to `[161, 162, 163]`** - the
+  new channel's index correctly appended, confirming the zone-list encoding side of the CPS's own
+  write matches our understanding exactly.
+- The new record's own format matches what `D890UVCodeplug` already expects: name at `+0x44`,
+  UTF-16LE, same `0x80`-byte size.
+
+One minor discrepancy worth a follow-up: the decoded name reads `Bank2 Test` (10 characters), not
+the fuller name mentioned when describing the test - worth double-checking with the user whether
+that's exactly what was typed into the CPS, a CPS-side truncation, or a read issue on this end (no
+evidence of the latter so far).
+
+**Conclusion: the whole bank-1/bank-2/zone-list model is now about as strongly validated as it can
+be without a from-here write** - not just consistent, static reads, but a live before/after test
+against a real, independent, user-initiated change, exactly like the zone-name and radio-ID
+discoveries earlier. The bank-2 blank-read episode appears to have been resolved by the CPS's own
+write to that region (plausibly some kind of session/cache state on the radio that a real
+full write cycle resets) rather than anything wrong with the address/format understanding itself.
+Given this is worked out via a real write cycle rather than something reproduced and understood
+from read side, the earlier caution about not extending write support to bank 2 until the read
+issue was understood still applies loosely - what's now known is that a *complete* CPS write
+resolves it; still don't know what a *partial* QDMR-side write (touching only bank 2) would do if
+this recurs.
+
+(This session's `D890UVCodeplug::Limit::numChannels()` is still 163 - the new test channel is
+channel index 163 (0-based), one past that limit, so it correctly doesn't show up in our own
+decode yet. Not a bug; just means this repo's model reflects the *original* known-good codeplug,
+not the user's temporary test addition.)
+
+---
+
 ## Update (2026-08-16, night) — encode-side validation: real findings, plus an unresolved bank-2 read-reliability issue
 
 **Built a proper round-trip validator** (`cli/testencode.cc`, offline, never touches the radio):
