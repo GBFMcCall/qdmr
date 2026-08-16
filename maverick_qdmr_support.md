@@ -7,6 +7,38 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
+## Update (2026-08-16, afternoon, MILESTONE 10) — read-side resilience fix for ping-pong storage
+
+Implemented `D890UVCodeplug::resolveMirroredAddress()`: given a table's primary (lower) address,
+allocates *both* copies (`addr` and `addr + Offset::mirrorOffset()`) during
+`allocateForDecoding()`, then at actual decode time picks whichever one isn't erased (`0xFF`-
+filled). Applied to the two tables currently decoded that are confirmed to use this radio's
+ping-pong storage: radio IDs (`setRadioID()`) and zone names (`zoneName()`). Zone channel-lists and
+channel banks are untouched - not confirmed to use this pattern, and channel banks 1/2 are known to
+be legitimately different content, not a mirror pair.
+
+**Caught a real bug during validation, not just theoretical:** the first pass called `data()` on
+the mirror address without checking `isAllocated()` first - fine against a live radio (which always
+allocates both copies now), but it segfaulted immediately against an older captured `.dfu` file
+from earlier in the session that predates this fix and only has the primary address allocated.
+`DFUFile::Image::data()` logs a fatal error and returns `nullptr` for an address nobody added an
+element for - dereferencing that crashes. Fixed by checking `isAllocated()` before ever calling
+`data()` on a candidate address, treating "not allocated" the same as "erased" (prefer the other
+copy). Class doc-comment updated to explain the mechanism and flag that the encode/write side does
+**not** yet know about this (still writes to the hardcoded primary address unconditionally) - a
+known gap for any future real-write support, not a problem today since encode is offline-validated
+only.
+
+**Re-validated against a brand new live read-only capture** (`dmrconf --radio d890uv -b read`,
+taken *after* the user's TOT change, so it reflects whichever copy is live right now): the offline
+round-trip validator (`testencode`) shows no crash and no new mismatches - the same 17 bytes across
+9 elements as before (all previously-documented special-case channels: APRS beacons, VFO
+placeholders). Radio IDs (`Maverick`/`Grant`, DMR ID `3158993`) and all 12 zone names (`Mounds`,
+`Analog`, `Tulsa So`, `PI`, `Tulsa C`, `BikeRide`, `Preston`, `Mannford`, `Claremore`, `Bixby`,
+`Depew`, `Traveling`) decode correctly through the new resilient path.
+
+---
+
 ## Update (2026-08-16, afternoon, MILESTONE 9) — MAJOR: the radio uses ping-pong/wear-leveled dual-copy storage, and this likely explains the bank-2 scare
 
 The user changed TOT from 120s to 180s and wrote it, as a second live-edit test. Diffing a fresh

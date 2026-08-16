@@ -135,8 +135,34 @@ D890UVCodeplug::encodeElements(const Flags &flags, Context &ctx, const ErrorStac
 uint32_t
 D890UVCodeplug::radioIdAddress(uint16_t i) {
   // Two independently-placed slots, not a confirmed array - see RadioIDElement documentation.
+  // Always the *primary* (lower) address of the ping-pong pair - see resolveMirroredAddress().
   static const uint32_t addr[2] = {0x03680000, 0x03684000};
   return addr[i];
+}
+
+uint32_t
+D890UVCodeplug::resolveMirroredAddress(uint32_t addr) const {
+  // isAllocated() first: data() on an address nobody added an element for logs a fatal error and
+  // returns nullptr, so this must never dereference an address it hasn't confirmed is present -
+  // e.g. an older captured image that predates this method won't have the mirror allocated at all.
+  auto erased = [this](uint32_t a) -> bool {
+    if (! isAllocated(a, 0))
+      return true;
+    const uint8_t *p = data(a);
+    for (unsigned int i=0; i<16; i++) {
+      if (0xff != p[i])
+        return false;
+    }
+    return true;
+  };
+  if (! erased(addr))
+    return addr;
+  uint32_t mirror = addr + Offset::mirrorOffset();
+  if (! erased(mirror))
+    return mirror;
+  // Both copies look erased (e.g. a slot that's simply never been used) - fall back to the
+  // primary address; decoding it produces the same empty/default result as before this fix.
+  return addr;
 }
 
 void
@@ -145,6 +171,9 @@ D890UVCodeplug::allocateRadioIDs() {
     uint32_t addr = radioIdAddress(i);
     if (! isAllocated(addr, 0))
       image(0).addElement(addr, RadioIDElement::size());
+    uint32_t mirror = addr + Offset::mirrorOffset();
+    if (! isAllocated(mirror, 0))
+      image(0).addElement(mirror, RadioIDElement::size());
   }
 }
 
@@ -152,7 +181,7 @@ bool
 D890UVCodeplug::setRadioID(Context &ctx, const ErrorStack &err) {
   Q_UNUSED(err)
   for (uint16_t i=0; i<Limit::numRadioIDs(); i++) {
-    RadioIDElement id(data(radioIdAddress(i)));
+    RadioIDElement id(data(resolveMirroredAddress(radioIdAddress(i))));
     if (DMRRadioID *rid = id.toRadioID()) {
       ctx.config()->radioIDs()->add(rid); ctx.add(rid, i);
     }
@@ -276,13 +305,17 @@ D890UVCodeplug::allocateZones() {
     uint32_t nameAddr = Offset::zoneNames() + i*Offset::betweenZoneNames();
     if (! isAllocated(nameAddr, 0))
       image(0).addElement(nameAddr, Offset::betweenZoneNames());
+    uint32_t nameMirror = nameAddr + Offset::mirrorOffset();
+    if (! isAllocated(nameMirror, 0))
+      image(0).addElement(nameMirror, Offset::betweenZoneNames());
   }
 }
 
 QString
 D890UVCodeplug::zoneName(uint16_t i) {
   // NUL-terminated UTF-16LE at offset 0 of each 0x40-byte slot - see class documentation.
-  uint16_t *ptr = (uint16_t *)data(Offset::zoneNames() + i*Offset::betweenZoneNames());
+  uint32_t addr = resolveMirroredAddress(Offset::zoneNames() + i*Offset::betweenZoneNames());
+  uint16_t *ptr = (uint16_t *)data(addr);
   QString name;
   for (unsigned int j=0; (j<Offset::betweenZoneNames()/2) && (0 != ptr[j]); j++)
     name.append(QChar(qFromLittleEndian(ptr[j])));

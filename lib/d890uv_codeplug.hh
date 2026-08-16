@@ -60,9 +60,23 @@
  * mapped area over time is meant to stay safe under that same principle. Still: **do not perform
  * an actual write to the radio with this class without explicit, separate confirmation** - a
  * round-trip byte match is strong evidence, not proof, and this hasn't been write-tested against
- * real hardware. Also see the read-reliability note in `maverick_qdmr_support.md` regarding
- * channel bank 2 - it was observed to intermittently read back as blank for reasons not fully
- * understood, which is exactly the failure mode a read-modify-write cycle is vulnerable to.
+ * real hardware.
+ *
+ * @warning This radio stores at least three small, frequently-rewritten tables - general settings,
+ * zone names, and radio IDs - as two ping-ponged copies exactly `Offset::mirrorOffset()`
+ * (`0x00040000`) apart: every write to one of these tables erases whichever copy was live and
+ * writes the new data to the other, flipping which one is current (confirmed byte-for-byte via a
+ * live before/after test - see `maverick_qdmr_support.md`, MILESTONE 9). This almost certainly
+ * explains the intermittent channel-bank-2-reads-as-blank scare noted in earlier updates: a
+ * hardcoded address for a ping-ponged table can go stale after *any* write, even one unrelated to
+ * what's being read, on what used to be a working read. The **read side is protected against this**
+ * - @c resolveMirroredAddress() checks both copies at decode time and uses whichever one actually
+ * has data, applied everywhere a ping-ponged address is read (radio IDs, zone names). The **encode
+ * side is not** - it still writes to the hardcoded primary address unconditionally, which is a
+ * known gap for any future real device-write support (it would need to write into whichever copy
+ * the radio currently considers free, not just always the lower address), not yet a problem in
+ * practice since encode is offline-validated only. Channel banks 1/2 are legitimately different
+ * channel ranges (confirmed, not a mirror pair) and are unaffected by any of this.
  *
  * @ingroup anytone */
 class D890UVCodeplug : public D868UVCodeplug
@@ -190,13 +204,25 @@ protected:
   /** Encode-path counterpart of @c createElements()/@c linkElements() combined. */
   bool encodeElements(const Flags &flags, Context &ctx, const ErrorStack &err);
 
-  /** Allocates the two known radio-ID-list slots (see @c RadioIDElement documentation). */
+  /** Allocates the two known radio-ID-list slots (see @c RadioIDElement documentation). Also
+   *  allocates each slot's ping-pong mirror copy - see @c resolveMirroredAddress(). */
   void allocateRadioIDs();
   bool setRadioID(Context &ctx, const ErrorStack &err);
   /** Encode-path counterpart of @c setRadioID(). */
   bool encodeRadioID(const Flags &flags, Context &ctx, const ErrorStack &err);
   /** Returns the device address of the i-th (0 or 1) known radio ID slot. */
   static uint32_t radioIdAddress(uint16_t i);
+
+  /** Given the *primary* (lower) address of a table known to use the ping-pong dual-copy storage
+   *  this radio uses for small, frequently-rewritten tables (general settings, zone names, radio
+   *  IDs - see `maverick_qdmr_support.md`, MILESTONE 9), returns whichever of @p addr or
+   *  @p addr + Offset::mirrorOffset() actually holds data (isn't erased/`0xFF`-filled), so decoding
+   *  doesn't silently read back empty just because the *other* copy happened to be live at read
+   *  time. Both candidate addresses must already be allocated (see e.g. @c allocateRadioIDs()) -
+   *  this only chooses between bytes already downloaded, it doesn't trigger new reads itself. Falls
+   *  back to @p addr if both copies look erased (nothing meaningful to prefer). Read-path only -
+   *  the encode/write side does not use this yet (see class documentation). */
+  uint32_t resolveMirroredAddress(uint32_t addr) const;
 
   /** Allocates both channel banks (163 channels total, unconditionally - no live bitmap is used
    *  or trusted; see class documentation). */
@@ -215,7 +241,9 @@ protected:
   static uint32_t channelAddress(uint16_t i);
 
   /** Allocates all 12 zones' channel-membership lists and name fields (fixed count, no live
-   *  bitmap). */
+   *  bitmap). Also allocates each name field's ping-pong mirror copy - see
+   *  @c resolveMirroredAddress(). The channel-membership lists are NOT known to use ping-pong
+   *  storage (not tested), so only one copy of those is allocated. */
   void allocateZones();
   bool createZones(Context &ctx, const ErrorStack &err);
   bool linkZones(Context &ctx, const ErrorStack &err);
@@ -263,6 +291,13 @@ protected:
     // betweenZoneChannels() (0x200) matches the inherited D868UVE default - no override needed.
     static constexpr unsigned int zoneNames() { return 0x03600000; }
     static constexpr unsigned int betweenZoneNames() { return 0x0040; }
+    /** Distance between the two ping-ponged copies of a table that uses this radio's dual-copy
+     *  wear-leveled storage (confirmed for general settings, zone names, and radio IDs so far -
+     *  see @c resolveMirroredAddress() and `maverick_qdmr_support.md`, MILESTONE 9). The primary
+     *  address constants in this class (@c zoneNames(), @c radioIdAddress()) are always the lower
+     *  of the pair; the mirror is always this much higher, never lower - confirmed for all three
+     *  known instances, not assumed symmetric. */
+    static constexpr unsigned int mirrorOffset() { return 0x00040000; }
     /** Base address of the scan-list table (see @c ScanListElement documentation) - distinct
      *  from the inherited D868UVE @c scanListBanks(), which does not apply to this radio. Uses
      *  the same `0x200` stride as @c betweenZoneChannels(), reused rather than redefined. */
