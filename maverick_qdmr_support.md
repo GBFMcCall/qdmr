@@ -7,6 +7,54 @@ This is a troubleshooting/build log for getting QDMR to talk to the Maverick nat
 
 ---
 
+## Update (2026-08-16, night) — repo now on GitHub; zone-list and roaming-table found
+
+**Housekeeping:**
+- Installed `gh` CLI (via passwordless sudo, same standing change noted in Environment below),
+  authenticated as `GBFMcCall`.
+- Forked `hmatuschek/qdmr` to `https://github.com/GBFMcCall/qdmr` and pushed both `master`
+  (matches upstream + the earlier Maverick commits) and a new `bridgecom-maverick-support` branch
+  (all work from here on happens on this branch, so it stays a clean unit to eventually PR against
+  `hmatuschek/qdmr`).
+- `cli/scanaddr.cc` gained a `--dump` flag (print every 16-byte read, not just flagged hits) to
+  make full-record dumps easier.
+
+**More memory-map findings (all read-only, `scanaddr`):**
+
+- **Zone channel-membership list found at `0x02000000`.** A fine dump showed a clean list of
+  16-bit little-endian channel indices — `0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16,
+  17, 18, 9`, then `0xFFFF` padding/terminator for the rest of the record. 19 entries (note index
+  `9` is out of sequence, tacked on at the end — probably meaningful, e.g. added to the zone
+  later). This is almost certainly one zone's member-channel list, referencing channels by index
+  into the `0x00FC0000` table from the earlier update.
+- **Roaming-channel table found at `0x02080000`**, a different record format from both the main
+  channel table and the zone list: RX frequency, then a *full TX frequency* (not a TX offset like
+  the main channel table), a `01 00` field, then a UTF-16LE name. First record's name decoded as
+  `OKWtr` — matching the real `RAB OKWtr` channel — followed by several default/unused-looking
+  entries named `Roaming CH1` through `Roaming CH 5`. This maps to the same concept as
+  `D878UVCodeplug::Offset::roamingChannels()` in the existing code, just at a different address
+  and with a different record layout.
+- **Scattered UTF-16LE strings found around `0x03140000`–`0x03A40000`**: `Hello!`, `Mounds`,
+  `Maverick`, `Civil ...`, `North...`. Not yet confirmed what table these belong to — `Mounds` is a
+  real Oklahoma town name and could plausibly be a zone name (the user's "OK" abbreviation in
+  channel names suggests Oklahoma-area organization), but this needs more targeted digging before
+  treating it as confirmed. Flagging here so it's not lost.
+- **A scripting mistake, logged for the record:** an attempt to survey multiple candidate
+  `0x80000`-strided slots hit a decimal/hex mixup in a shell loop (`$((16#$addr + 16#30))`
+  produces a decimal string, but `scanaddr --end` parses its argument as hex) and ended up
+  launching one large unintended sweep before the 2-minute command timeout stopped it. No harm —
+  still entirely read-only — but it means the earlier hypothesis of "12 zones at a clean
+  `0x80000` stride starting at `0x02000000`" is **not confirmed**: the slot at `+0x80000`
+  (`0x02080000`) turned out to be the roaming table above, not a second zone list, so that
+  structural theory needs rework rather than being assumed.
+
+**Where this leaves the picture:** we now have working, verified decodes for one full channel
+table (128 of 163 channels) and at least one zone's channel-membership list, plus a plausible
+roaming-channel table. Still open: the other ~35 channels, the other 11 zone lists (and their
+names), the real contact/radio-ID/group-list/scan-list tables, and the general settings block.
+
+---
+
 ## Update (2026-08-16, evening) — BREAKTHROUGH: found the real channel table, read-only
 
 The user confirmed the radio's codeplug is real and fully functional (tested zone/channel
